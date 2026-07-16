@@ -1,0 +1,6 @@
+# Normalize line endings; .bat must stay CRLF for cmd.exe.
+* text=auto
+*.bat text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.hcw text eol=lf

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "virtualsetmaker"
+version = "0.1.0"
+description = "Turn Shot Designer (.hcw) scenes into Unreal Engine scenes (cameras, actors, props, walls, lights)."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []  # parser + emitter use only the Python standard library
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+vsm = "virtualsetmaker.cli:main"
+
+[project.gui-scripts]
+vsm-gui = "virtualsetmaker.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,39 @@
+{
+  "name": "ExampleDolly",
+  "frame_rate": 24.0,
+  "duration_s": 4.0,
+  "units_per_meter": 100.0,
+  "actors": [
+    {"id": "hero", "name": "Hero", "location": {"x": -0.75, "y": 0.0, "z": 0.0}, "yaw_deg": 0.0, "height_m": 1.8, "color": "Red"},
+    {"id": "guest", "name": "Guest", "location": {"x": 0.75, "y": 0.0, "z": 0.0}, "yaw_deg": 180.0, "height_m": 1.65, "color": "Blue"}
+  ],
+  "props": [
+    {"id": "sofa", "name": "Sofa", "kind": "SOFA", "location": {"x": 0.0, "y": -2.0, "z": 0.0}, "yaw_deg": 90.0, "scale": {"x": 1.6, "y": 0.8, "z": 1.0}, "color": ""}
+  ],
+  "walls": [
+    {"id": "room", "closed_loop": false, "points": [
+      {"x": -3.2, "y": 1.2, "z": 0.0},
+      {"x": -3.2, "y": -2.4, "z": 0.0},
+      {"x": 2.8, "y": -2.4, "z": 0.0},
+      {"x": 2.8, "y": 1.2, "z": 0.0}
+    ]}
+  ],
+  "lights": [
+    {"id": "key", "kind": "FRESNELLARGE", "location": {"x": 2.35, "y": 2.37, "z": 0.0}, "yaw_deg": 225.0}
+  ],
+  "cameras": [
+    {
+      "id": "cam_a",
+      "name": "CameraA",
+      "sensor_width_mm": 36.0,
+      "sensor_height_mm": 24.0,
+      "keyframes": [
+        {"time_s": 0.0, "location": {"x": -0.2, "y": 2.7, "z": 1.5}, "yaw_deg": -90.0, "pitch_deg": 0.0, "roll_deg": 0.0, "focal_length_mm": 35.0},
+        {"time_s": 4.0, "location": {"x": -0.2, "y": 1.2, "z": 1.5}, "yaw_deg": -90.0, "pitch_deg": 0.0, "roll_deg": 0.0, "focal_length_mm": 50.0}
+      ]
+    }
+  ],
+  "shots": [
+    {"id": "s1", "name": "Push-in", "camera_id": "cam_a", "start_s": 0.0, "end_s": 4.0}
+  ]
+}
