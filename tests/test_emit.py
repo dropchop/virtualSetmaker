@@ -65,4 +65,7 @@ def test_static_scene_has_no_focal_track():
     )
     script = build_script(scene)
     compile(script, "<generated>", "exec")
-    assert "MovieSceneFloatTrack" not in script
+    # The focal-animation branch exists in the runtime template but must be
+    # switched off in the embedded data for a constant-focal camera.
+    payload = json.loads(script.split("SCENE = ", 1)[1].split("\n\n", 1)[0])
+    assert payload["cameras"][0]["focal_animated"] is False

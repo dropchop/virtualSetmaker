@@ -118,9 +118,14 @@ added in a few lines. Parts spawn grouped (attached to the first part) in the
 
 * **Static scenes** (placement of camera, actors, props, walls, lights): done,
   verified against a real `.hcw`.
-* **Camera moves**: the emitter fully supports keyframed camera moves + focal
-  animation (see `examples/example_scene.json`). The `.hcw` parser reads a single
-  snapshot today; multi-snapshot moves land once an animated sample is available.
+* **Camera moves**: done. Shot Designer stores a move as numbered camera *stop
+  marks* (`<stopMarks>`) linked by a `<Track>` dolly path; the parser merges
+  each chain into one camera keyed at the start and end stops (position and
+  look direction from the stops themselves) plus a key per intermediate track
+  point so curved paths keep their bow (Unreal's AUTO tangents smooth through
+  them). Timing comes from path length at the scene's camera-speed index
+  (speed 3 ≈ 0.75 m/s dolly; `_DOLLY_MPS_PER_SPEED` in `parse/shotdesigner.py`).
+  Verified against straight-line and curved-move samples in `samples/`.
 
 ## Layout
 
