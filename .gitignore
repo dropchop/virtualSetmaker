@@ -12,9 +12,11 @@ venv/
 scene.py
 *_unreal.py
 
-# User-dropped Shot Designer files (keep the shared sample, ignore the rest)
+# User-dropped Shot Designer files (keep the shared samples, ignore the rest)
 samples/*
 !samples/Sceneforclaude.hcw
+!samples/Camera_move_only.hcw
+!samples/Camera_move_curve.hcw
 
 # Local Claude Code settings
 .claude/settings.local.json
