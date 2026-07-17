@@ -58,12 +58,23 @@ def _light_class(kind: str) -> str:
             return cls
     return "spot"
 
-# Skeletal meshes tried in order for actors; falls back to a capsule if none load.
-MANNEQUIN_CANDIDATES = [
+# Skeletal meshes tried in order for actors; falls back to a capsule if none
+# load. Manny for Shot Designer Type A characters, Quinn for Type B (<female>).
+# These live in project content (the Third Person template pack), not engine
+# content -- the emitted script tells the user how to add the pack if missing.
+MANNY_CANDIDATES = [
     "/Game/Characters/Mannequins/Meshes/SKM_Manny.SKM_Manny",
-    "/Game/Characters/Mannequins/Meshes/SKM_Quinn.SKM_Quinn",
+    "/Game/ThirdPerson/Characters/Mannequins/Meshes/SKM_Manny.SKM_Manny",
     "/Game/Characters/Mannequin_UE4/Meshes/SK_Mannequin.SK_Mannequin",
+    "/Game/Mannequin/Character/Mesh/SK_Mannequin.SK_Mannequin",
 ]
+QUINN_CANDIDATES = [
+    "/Game/Characters/Mannequins/Meshes/SKM_Quinn.SKM_Quinn",
+    "/Game/ThirdPerson/Characters/Mannequins/Meshes/SKM_Quinn.SKM_Quinn",
+]
+# UE mannequin meshes are authored facing +Y: a raw SkeletalMeshActor at yaw 0
+# looks down +Y, so facing direction phi needs a spawn yaw of phi - 90.
+MANNEQUIN_YAW_OFFSET = -90.0
 CUBE_MESH = "/Engine/BasicShapes/Cube.Cube"
 CYLINDER_MESH = "/Engine/BasicShapes/Cylinder.Cylinder"
 SPHERE_MESH = "/Engine/BasicShapes/Sphere.Sphere"
@@ -83,6 +94,7 @@ def _scene_payload(scene: Scene) -> dict:
                 "label": a.name or a.id,
                 "height_cm": a.height_m * 100.0,
                 "color": a.color,
+                "female": a.female,
             }
         )
 
@@ -321,7 +333,15 @@ def build_scene():
     }
     cube = meshes["cube"]
     cylinder = meshes["cylinder"]
-    mannequin = _load_first(MANNEQUIN_CANDIDATES)
+    manny = _load_first(MANNY_CANDIDATES)
+    quinn = _load_first(QUINN_CANDIDATES) or manny
+    if manny is None:
+        unreal.log_warning(
+            "VSM: no UE Mannequin found in this project -- actors will spawn as "
+            "capsule placeholders. To get Mannys: Content Drawer -> +Add -> "
+            "'Add Feature or Content Pack...' -> Third Person -> Add to Project, "
+            "then run this script again."
+        )
     for shape, mesh in meshes.items():
         if mesh is None:
             unreal.log_error(
@@ -333,8 +353,13 @@ def build_scene():
     # --- actors ---------------------------------------------------------
     for a in SCENE["actors"]:
         what = "actor '%s'" % a["label"]
+        mannequin = quinn if a["female"] else manny
         if mannequin is not None:
-            actor = _spawn_object(mannequin, a["loc"], [0.0, a["yaw"], 0.0], what)
+            # Mannequin meshes are authored facing +Y; offset the spawn yaw so
+            # the Manny looks where the Shot Designer character faces.
+            actor = _spawn_object(
+                mannequin, a["loc"], [0.0, a["yaw"] + MANNEQUIN_YAW_OFFSET, 0.0], what
+            )
         elif cylinder is not None:
             h = a["height_cm"]
             loc = [a["loc"][0], a["loc"][1], h / 2.0]
@@ -554,7 +579,9 @@ def build_script(scene: Scene) -> str:
         "    unreal = None\n\n" % scene.name
     )
     constants = (
-        "MANNEQUIN_CANDIDATES = %r\n"
+        "MANNY_CANDIDATES = %r\n"
+        "QUINN_CANDIDATES = %r\n"
+        "MANNEQUIN_YAW_OFFSET = %r\n"
         "CUBE_MESH = %r\n"
         "CYLINDER_MESH = %r\n"
         "SPHERE_MESH = %r\n"
@@ -564,7 +591,9 @@ def build_script(scene: Scene) -> str:
         # not pasted in as a literal.
         'SCENE = json.loads(r"""\n%s\n""")\n'
         % (
-            MANNEQUIN_CANDIDATES,
+            MANNY_CANDIDATES,
+            QUINN_CANDIDATES,
+            MANNEQUIN_YAW_OFFSET,
             CUBE_MESH,
             CYLINDER_MESH,
             SPHERE_MESH,

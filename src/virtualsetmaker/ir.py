@@ -42,6 +42,7 @@ class Actor:
     yaw_deg: float = 0.0
     height_m: float = 1.8
     color: str = ""
+    female: bool = False  # Shot Designer <female> flag (Type B characters)
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "Actor":
@@ -52,6 +53,7 @@ class Actor:
             yaw_deg=float(d.get("yaw_deg", 0.0)),
             height_m=float(d.get("height_m", 1.8)),
             color=d.get("color", ""),
+            female=bool(d.get("female", False)),
         )
 
 

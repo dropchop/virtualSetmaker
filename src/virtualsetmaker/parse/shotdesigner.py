@@ -307,6 +307,7 @@ def _parse_character(obj: ET.Element, loc, idx: int) -> Actor:
         yaw_deg=_yaw_deg(obj),
         height_m=1.65 if female else 1.8,
         color=color,
+        female=female,
     )
 
 
