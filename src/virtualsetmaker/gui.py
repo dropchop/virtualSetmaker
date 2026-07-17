@@ -96,7 +96,7 @@ class App:
 
         ttk.Label(
             root,
-            text='Run in Unreal 5.6:  Output Log → switch "Cmd" to "Python" →  py "C:\\path\\to\\Scene_unreal.py"',
+            text='Run in Unreal 5.8:  Output Log → switch "Cmd" to "Python" →  py "C:\\path\\to\\Scene_unreal.py"',
         ).pack(fill="x", padx=10, pady=(0, 8))
 
     # --- actions ------------------------------------------------------------

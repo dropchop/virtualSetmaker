@@ -20,8 +20,13 @@ def test_generated_script_is_syntactically_valid_python():
 def test_generated_script_uses_modern_unreal_api():
     script = build_script(_example_scene())
     assert "EditorLevelLibrary" not in script  # no deprecated API
+    # Spawnables must go through the subsystem (UE 5.6+ deprecated the
+    # MovieSceneSequence method; the subsystem form is current in 5.8).
+    assert "seq.add_spawnable_from_instance(" not in script
     for expected in (
-        "add_spawnable_from_instance",
+        "LevelSequenceEditorSubsystem",
+        "open_level_sequence",
+        "add_spawnable_from_instance(seq, actor)",
         "MovieScene3DTransformTrack",
         "MovieSceneCameraCutTrack",
         "get_cine_camera_component",

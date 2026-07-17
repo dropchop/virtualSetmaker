@@ -1,11 +1,11 @@
 # virtualSetmaker
 
 Turn **Shot Designer** (Hollywood Camera Work `.hcw`) scene files into **Unreal
-Engine 5.6** scenes — cameras (with moves), actors, props, walls, and lights —
-via a Python script you run inside the editor.
+Engine 5.8** scenes (compatible with 5.6+) — cameras (with moves), actors,
+props, walls, and lights — via a Python script you run inside the editor.
 
 ```
-Shot Designer .hcw ──parse──▶  IR (JSON)  ──emit──▶  Unreal 5.6 Python script
+Shot Designer .hcw ──parse──▶  IR (JSON)  ──emit──▶  Unreal 5.8 Python script
    (plain XML)               neutral scene           run in the editor
 ```
 
@@ -62,7 +62,7 @@ and any unmatched-prop notes. Last-used folders are remembered in
 **Or via pip:** install Python 3.9+, then `pip install .` in the repo — this
 gives `vsm` (terminal) and `vsm-gui` (windowed, no console) commands.
 
-### Running the generated script in Unreal
+### Running the generated script in Unreal (5.8, or any 5.6+)
 
 1. Enable **Edit → Plugins → "Python Editor Script Plugin"** (restart once).
 2. Open the **Output Log**, switch the dropdown from `Cmd` to **`Python`**.
@@ -70,7 +70,9 @@ gives `vsm` (terminal) and `vsm-gui` (windowed, no console) commands.
 
 It spawns the actors/props/walls/lights into the current level and creates a
 **Level Sequence** (`/Game/VSM/SEQ_<name>`) with the CineCamera(s), any camera
-move keyframes, focal-length animation, and a camera-cut track.
+move keyframes, focal-length animation, and a camera-cut track. The sequence
+is opened in Sequencer as part of the build (required by the UE 5.6+
+`LevelSequenceEditorSubsystem` spawnable API) and left open for you.
 
 ## Scale & conventions
 
@@ -135,7 +137,7 @@ src/virtualsetmaker/
   coords.py             the single Shot Designer→Unreal coordinate transform
   parse/shotdesigner.py .hcw XML → IR
   parse/probe.py        format guard
-  emit/unreal_python.py IR → Unreal 5.6 Python script
+  emit/unreal_python.py IR → Unreal 5.8 Python script
   emit/blockouts.py     prop + light-fixture blockout recipes
   build.py              shared build core (used by CLI and GUI)
   gui.py                tkinter exporter (vsm gui / vsm-gui)
