@@ -17,6 +17,7 @@ samples/*
 !samples/Sceneforclaude.hcw
 !samples/Camera_move_only.hcw
 !samples/Camera_move_curve.hcw
+!samples/one_with_table.hcw
 
 # Local Claude Code settings
 .claude/settings.local.json
