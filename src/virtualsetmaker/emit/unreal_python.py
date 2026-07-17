@@ -105,7 +105,7 @@ def _scene_payload(scene: Scene) -> dict:
                 "label": p.name,
                 "kind": p.kind,
                 "matched": matched,
-                "parts": _bake_parts(parts, (x, y), yaw, (p.scale.x, p.scale.y), mirror_y=True),
+                "parts": _bake_parts(parts, (x, y), yaw, (p.scale.x, p.scale.y)),
             }
         )
 
@@ -198,7 +198,6 @@ def _bake_parts(
     origin_xy: tuple[float, float],
     yaw_deg: float,
     footprint_scale: tuple[float, float],
-    mirror_y: bool = False,
 ) -> list[dict]:
     """Convert recipe parts (prop-local cm) to world-space spawn transforms.
 
@@ -208,23 +207,19 @@ def _bake_parts(
     (``Rz(yaw)·Ry(pitch)·Rx(roll)``): adding the prop yaw to a part's own yaw is
     the same as rotating the finished part about Z.
 
-    ``mirror_y`` applies the screen->Unreal Y flip to the recipe's LOCAL frame:
-    recipes are authored in Shot Designer screen orientation (+Y toward the
-    prop's front), and a mirrored world needs the local +Y offsets, part yaws
-    and rolls negated too — otherwise asymmetric parts (a sofa backrest, an
-    open door panel) land on the wrong side of the prop. Light fixtures keep
-    the legacy un-mirrored bake until they get a calibration pass of their own.
+    Recipes are authored in Shot Designer screen orientation (+Y toward the
+    prop's front); since the screen->Unreal map is chirality-preserving (see
+    :mod:`virtualsetmaker.coords`), the local frame carries over unchanged.
     """
     ox, oy = origin_xy
     sx, sy = footprint_scale
-    flip = -1.0 if mirror_y else 1.0
     rad = math.radians(yaw_deg)
     cos_y, sin_y = math.cos(rad), math.sin(rad)
 
     baked = []
     for part in parts:
         px, py, pz = part["offset"]
-        px, py = px * sx, py * sy * flip
+        px, py = px * sx, py * sy
         wx = ox + px * cos_y - py * sin_y
         wy = oy + px * sin_y + py * cos_y
         pitch, part_yaw, roll = part["rot"]
@@ -233,7 +228,7 @@ def _bake_parts(
             {
                 "shape": part["shape"],
                 "loc": [wx, wy, pz],
-                "rot": [pitch, yaw_deg + part_yaw * flip, roll * flip],
+                "rot": [pitch, yaw_deg + part_yaw, roll],
                 "scale": [size[0] * sx / 100.0, size[1] * sy / 100.0, size[2] / 100.0],
             }
         )

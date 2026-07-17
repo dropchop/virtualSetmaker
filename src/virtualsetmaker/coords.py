@@ -11,8 +11,15 @@ Frames
 * **Unreal**: centimeters, X forward, Y right, Z up, left-handed. Yaw is a
   rotation about Z.
 
-The conversion is a metres->cm scale plus a single Y flip (screen "down" becomes
-Unreal -Y). The yaw sign is flipped to stay consistent with that Y flip.
+The conversion is a pure metres->cm scale: axes and yaw map across UNCHANGED.
+Shot Designer's floor-plan frame (x right, y down, z implicitly up) and
+Unreal's frame are BOTH left-handed, so the identity is the proper
+(chirality-preserving) map between them. An earlier version negated Y "so
+screen-down becomes -Y" — that map has determinant -1, i.e. it reflected the
+whole scene: every through-camera shot came out mirrored left/right versus the
+Shot Designer plan, and users saw props "on the other side of the room".
+Verified against a real scene: an actor on the camera's screen-left in Shot
+Designer must land on the camera's left in Unreal.
 """
 
 from __future__ import annotations
@@ -24,12 +31,12 @@ M_TO_CM = 100.0
 
 def ir_to_ue_location(v: Vec3, m_to_cm: float = M_TO_CM) -> tuple[float, float, float]:
     """IR meters (screen-oriented) -> Unreal centimeters (X, Y, Z)."""
-    return (v.x * m_to_cm, -v.y * m_to_cm, v.z * m_to_cm)
+    return (v.x * m_to_cm, v.y * m_to_cm, v.z * m_to_cm)
 
 
 def ir_to_ue_yaw(yaw_deg: float) -> float:
-    """IR yaw (deg, from +X) -> Unreal yaw, negated to match the Y flip."""
-    return -yaw_deg
+    """IR yaw (deg, from +X) -> Unreal yaw. Same handedness, no sign change."""
+    return yaw_deg
 
 
 def ir_to_ue_rotation(

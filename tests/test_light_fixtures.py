@@ -49,7 +49,7 @@ def test_unknown_kind_falls_back_to_default_stand():
 def test_emit_point_rotates_with_fixture_yaw():
     scene = Scene(lights=[Light(id="l", kind="SOFTBOX", location=Vec3(0.0, 0.0, 0.0), yaw_deg=-90.0)])
     lt = _scene_payload(scene)["lights"][0]
-    # IR yaw -90 -> UE yaw +90: the +Y emit offset (0, 45) swings onto -X... n.b.
-    # rotated by +90 deg: (x, y) -> (-y, x), so (0, 45) -> (-45, 0).
-    assert abs(lt["light_loc"][0] - (-45.0)) < 1e-9
+    # Yaw carries over unchanged (identity screen->UE map): the +Y emit offset
+    # (0, 45) rotated by -90 deg lands on +X: (x, y) -> (y, -x).
+    assert abs(lt["light_loc"][0] - 45.0) < 1e-9
     assert abs(lt["light_loc"][1] - 0.0) < 1e-9
