@@ -57,7 +57,13 @@ class Actor:
 
 @dataclass
 class Prop:
-    """A set piece / furniture item (``<GenericProp>`` or ``<GenericSet>``)."""
+    """A set piece / furniture item (``<GenericProp>`` or ``<GenericSet>``).
+
+    ``wall_snapped`` marks objects Shot Designer glued to a wall (doors,
+    windows: ``<snapPath>`` names the wall). Their ``yaw_deg`` is the wall
+    segment's direction, not a user rotation, and the emitter orients them
+    width-along-the-wall instead of using the freestanding-prop convention.
+    """
 
     id: str
     name: str
@@ -66,6 +72,7 @@ class Prop:
     yaw_deg: float = 0.0
     scale: Vec3 = field(default_factory=lambda: Vec3(1.0, 1.0, 1.0))
     color: str = ""
+    wall_snapped: bool = False
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "Prop":
@@ -77,6 +84,7 @@ class Prop:
             yaw_deg=float(d.get("yaw_deg", 0.0)),
             scale=Vec3.from_dict(d.get("scale", {"x": 1, "y": 1, "z": 1})),
             color=d.get("color", ""),
+            wall_snapped=bool(d.get("wall_snapped", False)),
         )
 
 

@@ -89,14 +89,23 @@ def _scene_payload(scene: Scene) -> dict:
     props = []
     for p in scene.props:
         x, y, _z = ir_to_ue_location(p.location, m2cm)
-        yaw = ir_to_ue_yaw(p.yaw_deg)
+        # Prop angle semantics, calibrated against a real scene (a sofa placed
+        # flush against a wall + a door snapped into one):
+        # * freestanding props (RotatorObject): the stored angle points at the
+        #   prop's BACK — the recipe front (+Y local) faces angle+180, so the
+        #   recipe frame's screen rotation is angle+90;
+        # * wall-snapped sets (doors/windows, <snapPath> set): the angle is the
+        #   wall segment's direction and the recipe width (local X) lies along
+        #   it — screen rotation is the angle itself.
+        screen_yaw = p.yaw_deg if p.wall_snapped else p.yaw_deg + 90.0
+        yaw = ir_to_ue_yaw(screen_yaw)
         matched, parts = recipe_for(p.kind)
         props.append(
             {
                 "label": p.name,
                 "kind": p.kind,
                 "matched": matched,
-                "parts": _bake_parts(parts, (x, y), yaw, (p.scale.x, p.scale.y)),
+                "parts": _bake_parts(parts, (x, y), yaw, (p.scale.x, p.scale.y), mirror_y=True),
             }
         )
 
@@ -189,6 +198,7 @@ def _bake_parts(
     origin_xy: tuple[float, float],
     yaw_deg: float,
     footprint_scale: tuple[float, float],
+    mirror_y: bool = False,
 ) -> list[dict]:
     """Convert recipe parts (prop-local cm) to world-space spawn transforms.
 
@@ -197,16 +207,24 @@ def _bake_parts(
     life). Yaw composition is exact under UE's rotator order
     (``Rz(yaw)·Ry(pitch)·Rx(roll)``): adding the prop yaw to a part's own yaw is
     the same as rotating the finished part about Z.
+
+    ``mirror_y`` applies the screen->Unreal Y flip to the recipe's LOCAL frame:
+    recipes are authored in Shot Designer screen orientation (+Y toward the
+    prop's front), and a mirrored world needs the local +Y offsets, part yaws
+    and rolls negated too — otherwise asymmetric parts (a sofa backrest, an
+    open door panel) land on the wrong side of the prop. Light fixtures keep
+    the legacy un-mirrored bake until they get a calibration pass of their own.
     """
     ox, oy = origin_xy
     sx, sy = footprint_scale
+    flip = -1.0 if mirror_y else 1.0
     rad = math.radians(yaw_deg)
     cos_y, sin_y = math.cos(rad), math.sin(rad)
 
     baked = []
     for part in parts:
         px, py, pz = part["offset"]
-        px, py = px * sx, py * sy
+        px, py = px * sx, py * sy * flip
         wx = ox + px * cos_y - py * sin_y
         wy = oy + px * sin_y + py * cos_y
         pitch, part_yaw, roll = part["rot"]
@@ -215,7 +233,7 @@ def _bake_parts(
             {
                 "shape": part["shape"],
                 "loc": [wx, wy, pz],
-                "rot": [pitch, yaw_deg + part_yaw, roll],
+                "rot": [pitch, yaw_deg + part_yaw * flip, roll * flip],
                 "scale": [size[0] * sx / 100.0, size[1] * sy / 100.0, size[2] / 100.0],
             }
         )
