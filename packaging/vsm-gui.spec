@@ -7,9 +7,13 @@ import os
 
 block_cipher = None
 
-here = os.path.dirname(os.path.abspath(SPECPATH if "SPECPATH" in dir() else __file__))
+# SPECPATH (set by PyInstaller) is already the directory holding this spec.
+here = os.path.abspath(SPECPATH)
 repo = os.path.dirname(here)
 src = os.path.join(repo, "src")
+
+if not os.path.isfile(os.path.join(src, "virtualsetmaker", "gui.py")):
+    raise SystemExit("Cannot find src/virtualsetmaker/gui.py next to packaging/ (looked in %s)" % repo)
 
 a = Analysis(
     [os.path.join(src, "virtualsetmaker", "gui.py")],
