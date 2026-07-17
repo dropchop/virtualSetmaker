@@ -254,8 +254,9 @@ def _v(t):
 
 
 def _r(t):
-    # unreal.Rotator(pitch, yaw, roll)
-    return unreal.Rotator(float(t[0]), float(t[1]), float(t[2]))
+    # t is [pitch, yaw, roll]. The Python Rotator ctor is (roll, pitch, yaw) --
+    # NOT the C++ FRotator order -- so pass keywords to be order-proof.
+    return unreal.Rotator(roll=float(t[2]), pitch=float(t[0]), yaw=float(t[1]))
 
 
 def _load_first(paths):

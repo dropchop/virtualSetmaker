@@ -39,6 +39,9 @@ def test_generated_script_uses_modern_unreal_api():
     # Spawnables must go through the subsystem (UE 5.6+ deprecated the
     # MovieSceneSequence method; the subsystem form is current in 5.8).
     assert "seq.add_spawnable_from_instance(" not in script
+    # Rotators must be built with keywords: the Python ctor order is
+    # (roll, pitch, yaw), not C++'s (pitch, yaw, roll).
+    assert "unreal.Rotator(roll=" in script
     for expected in (
         "LevelSequenceEditorSubsystem",
         "open_level_sequence",
