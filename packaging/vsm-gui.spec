@@ -16,7 +16,9 @@ if not os.path.isfile(os.path.join(src, "virtualsetmaker", "gui.py")):
     raise SystemExit("Cannot find src/virtualsetmaker/gui.py next to packaging/ (looked in %s)" % repo)
 
 a = Analysis(
-    [os.path.join(src, "virtualsetmaker", "gui.py")],
+    # Entry launcher (not gui.py itself): the GUI uses package-relative
+    # imports, so it has to be imported as virtualsetmaker.gui.
+    [os.path.join(here, "launch_vsm_gui.py")],
     pathex=[src],
     binaries=[],
     datas=[],
