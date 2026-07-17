@@ -64,3 +64,42 @@ def test_wall_has_four_points():
 def test_parsed_sample_is_valid():
     scene = parse_file(SAMPLE)
     assert scene.validate() == []
+
+
+def test_unknown_canvas_objects_are_recorded_not_silently_dropped():
+    xml = """
+    <ShotDesignerDocument>
+      <CurrentSnapshot>
+        <Canvas>
+          <ImageProp><uniqueID>ip-1</uniqueID><x>10</x><y>20</y></ImageProp>
+          <MysteryThing><uniqueID>m-1</uniqueID></MysteryThing>
+          <ImageProp><uniqueID>ip-2</uniqueID><x>30</x><y>40</y></ImageProp>
+        </Canvas>
+      </CurrentSnapshot>
+      <DocumentPostScript><numObjects>3</numObjects><numSnapshot>0</numSnapshot></DocumentPostScript>
+    </ShotDesignerDocument>
+    """
+    from virtualsetmaker.parse.shotdesigner import parse_string
+
+    scene = parse_string(xml)
+    assert scene.props == []
+    assert sorted(scene.skipped_objects) == ["ImageProp", "ImageProp", "MysteryThing"]
+
+
+def test_extra_snapshots_are_counted():
+    xml = """
+    <ShotDesignerDocument>
+      <CurrentSnapshot><Canvas/></CurrentSnapshot>
+      <DocumentPostScript><numObjects>0</numObjects><numSnapshot>4</numSnapshot></DocumentPostScript>
+    </ShotDesignerDocument>
+    """
+    from virtualsetmaker.parse.shotdesigner import parse_string
+
+    scene = parse_string(xml)
+    assert scene.extra_snapshots == 4
+
+
+def test_sample_has_no_skipped_objects():
+    scene = parse_file(SAMPLE)
+    assert scene.skipped_objects == []
+    assert scene.extra_snapshots == 0
