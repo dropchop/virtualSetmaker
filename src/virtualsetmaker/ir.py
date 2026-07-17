@@ -198,6 +198,11 @@ class Scene:
     lights: list[Light] = field(default_factory=list)
     cameras: list[Camera] = field(default_factory=list)
     shots: list[Shot] = field(default_factory=list)
+    # Parse diagnostics: canvas object tags the parser did not recognize (one
+    # entry per skipped object), and how many snapshots beyond the current one
+    # the source document carries (only the current snapshot is converted).
+    skipped_objects: list[str] = field(default_factory=list)
+    extra_snapshots: int = 0
 
     # -- serialization -----------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
@@ -219,6 +224,8 @@ class Scene:
             lights=[Light.from_dict(x) for x in d.get("lights", [])],
             cameras=[Camera.from_dict(x) for x in d.get("cameras", [])],
             shots=[Shot.from_dict(x) for x in d.get("shots", [])],
+            skipped_objects=[str(x) for x in d.get("skipped_objects", [])],
+            extra_snapshots=int(d.get("extra_snapshots", 0)),
         )
 
     @staticmethod

@@ -32,3 +32,14 @@ def test_build_hcw_raises_on_non_shotdesigner(tmp_path):
     with pytest.raises(Exception):
         build_hcw(str(bad), str(tmp_path / "never.py"))
     assert not (tmp_path / "never.py").exists()
+
+
+def test_report_warns_about_skipped_objects_and_snapshots():
+    from virtualsetmaker.build import report_for
+    from virtualsetmaker.ir import Scene
+
+    scene = Scene(skipped_objects=["ImageProp", "ImageProp"], extra_snapshots=2)
+    report = report_for(scene, "in.hcw", "out.py")
+    joined = "\n".join(report.warnings)
+    assert "skipped 2 <ImageProp>" in joined
+    assert "2 snapshot(s)" in joined

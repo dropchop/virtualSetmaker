@@ -121,7 +121,13 @@ def _parse_root(root: ET.Element, units_per_meter: float) -> Scene:
             scene.walls.append(_parse_wall(obj, upm, i))
         elif tag == "GenericLight":
             scene.lights.append(_parse_light(obj, loc, i))
-        # unknown tags are ignored on purpose
+        else:
+            # Unknown object types are skipped, but never silently: they are
+            # recorded so the build report can tell the user what was dropped
+            # (e.g. palette items stored under tags we have not seen yet).
+            scene.skipped_objects.append(tag)
+
+    scene.extra_snapshots = int(_ftext(root.find("DocumentPostScript"), "numSnapshot", 0.0))
 
     camera_speed = _ftext(root.find("CurrentSnapshot/TimeSlices/TimeNumber"), "cameraSpeed", 3.0)
     scene.cameras = _assemble_cameras(raw_cameras, tracks, camera_speed)

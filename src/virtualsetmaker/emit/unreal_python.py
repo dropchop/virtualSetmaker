@@ -269,13 +269,30 @@ def _load_first(paths):
 
 _actor_sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
+# Names of objects whose spawn failed, so the end-of-run summary can list them.
+# One bad object must not abort the whole build (an uncaught exception here
+# would silently drop everything that spawns after it).
+_FAILURES = []
 
-def _spawn_object(mesh, loc, rot):
-    return _actor_sub.spawn_actor_from_object(mesh, _v(loc), _r(rot))
+
+def _spawn(fn, what):
+    try:
+        actor = fn()
+    except Exception as exc:
+        actor = None
+        unreal.log_error("VSM: exception spawning %s: %s" % (what, exc))
+    if actor is None:
+        _FAILURES.append(what)
+        unreal.log_error("VSM: could not spawn %s" % what)
+    return actor
 
 
-def _spawn_class(cls, loc, rot):
-    return _actor_sub.spawn_actor_from_class(cls, _v(loc), _r(rot))
+def _spawn_object(mesh, loc, rot, what):
+    return _spawn(lambda: _actor_sub.spawn_actor_from_object(mesh, _v(loc), _r(rot)), what)
+
+
+def _spawn_class(cls, loc, rot, what):
+    return _spawn(lambda: _actor_sub.spawn_actor_from_class(cls, _v(loc), _r(rot)), what)
 
 
 def _secs_to_frame(seq, t):
@@ -292,30 +309,54 @@ def build_scene():
     cube = meshes["cube"]
     cylinder = meshes["cylinder"]
     mannequin = _load_first(MANNEQUIN_CANDIDATES)
+    for shape, mesh in meshes.items():
+        if mesh is None:
+            unreal.log_error(
+                "VSM: engine basic shape %r failed to load -- %s blockout parts cannot spawn"
+                % (shape, shape)
+            )
+    spawned = {"actors": 0, "props": 0, "prop_parts": 0, "walls": 0, "lights": 0, "cameras": 0}
 
     # --- actors ---------------------------------------------------------
     for a in SCENE["actors"]:
+        what = "actor '%s'" % a["label"]
         if mannequin is not None:
-            actor = _spawn_object(mannequin, a["loc"], [0.0, a["yaw"], 0.0])
+            actor = _spawn_object(mannequin, a["loc"], [0.0, a["yaw"], 0.0], what)
         elif cylinder is not None:
             h = a["height_cm"]
             loc = [a["loc"][0], a["loc"][1], h / 2.0]
-            actor = _spawn_object(cylinder, loc, [0.0, a["yaw"], 0.0])
-            actor.set_actor_scale3d(unreal.Vector(0.4, 0.4, h / 100.0))
+            actor = _spawn_object(cylinder, loc, [0.0, a["yaw"], 0.0], what)
+            if actor is not None:
+                actor.set_actor_scale3d(unreal.Vector(0.4, 0.4, h / 100.0))
         else:
+            unreal.log_error("VSM: no mannequin and no cylinder mesh -- skipping " + what)
             continue
+        if actor is None:
+            continue
+        spawned["actors"] += 1
         actor.set_actor_label("Actor_" + a["label"])
         actor.set_folder_path("VSM/Actors")
 
     # --- props (multi-part blockouts) ------------------------------------
     keep_world = unreal.AttachmentRule.KEEP_WORLD
     for p in SCENE["props"]:
+        if not p["parts"]:
+            unreal.log_warning(
+                "VSM: prop '%s' (kind %r) has no blockout parts -- nothing to spawn"
+                % (p["label"], p["kind"])
+            )
+            continue
         parent = None
         for i, part in enumerate(p["parts"]):
             mesh = meshes.get(part["shape"]) or cube
             if mesh is None:
                 continue
-            actor = _spawn_object(mesh, part["loc"], part["rot"])
+            actor = _spawn_object(
+                mesh, part["loc"], part["rot"], "prop '%s' part %d" % (p["label"], i)
+            )
+            if actor is None:
+                continue
+            spawned["prop_parts"] += 1
             actor.set_actor_scale3d(_v(part["scale"]))
             if parent is None:
                 parent = actor
@@ -324,11 +365,16 @@ def build_scene():
                 actor.set_actor_label("Prop_%s_part%d" % (p["label"], i))
                 actor.attach_to_actor(parent, "", keep_world, keep_world, keep_world, False)
             actor.set_folder_path("VSM/Props")
+        if parent is not None:
+            spawned["props"] += 1
 
     # --- walls (blockout) -------------------------------------------
     if cube is not None:
         for w in SCENE["wall_segments"]:
-            actor = _spawn_object(cube, w["loc"], [0.0, w["yaw"], 0.0])
+            actor = _spawn_object(cube, w["loc"], [0.0, w["yaw"], 0.0], "wall '%s'" % w["label"])
+            if actor is None:
+                continue
+            spawned["walls"] += 1
             actor.set_actor_scale3d(
                 unreal.Vector(w["length"] / 100.0, WALL_THICKNESS_CM / 100.0, WALL_HEIGHT_CM / 100.0)
             )
@@ -349,7 +395,11 @@ def build_scene():
             mesh = meshes.get(part["shape"]) or cube
             if mesh is None:
                 continue
-            actor = _spawn_object(mesh, part["loc"], part["rot"])
+            actor = _spawn_object(
+                mesh, part["loc"], part["rot"], "light rig '%s' part %d" % (lt["label"], i)
+            )
+            if actor is None:
+                continue
             actor.set_actor_scale3d(_v(part["scale"]))
             if rig is None:
                 rig = actor
@@ -362,12 +412,20 @@ def build_scene():
         # the actual light, attached to the rig so they move together
         if lt["light_loc"] is not None:
             light = _spawn_class(
-                light_classes.get(lt["cls"], unreal.SpotLight), lt["light_loc"], lt["light_rot"]
+                light_classes.get(lt["cls"], unreal.SpotLight),
+                lt["light_loc"],
+                lt["light_rot"],
+                "light '%s'" % lt["label"],
             )
+            if light is None:
+                continue
+            spawned["lights"] += 1
             light.set_actor_label("Light_" + lt["label"])
             light.set_folder_path("VSM/Lights")
             if rig is not None:
                 light.attach_to_actor(rig, "", keep_world, keep_world, keep_world, False)
+        elif rig is not None:
+            spawned["lights"] += 1  # rigging-only fixture (e.g. speed rail)
 
     # --- level sequence + cameras --------------------------------------
     tools = unreal.AssetToolsHelpers.get_asset_tools()
@@ -385,7 +443,13 @@ def build_scene():
     bindings = []
     for cam in SCENE["cameras"]:
         k0 = cam["keys"][0]
-        actor = _spawn_class(unreal.CineCameraActor, k0["loc"], k0["rot"])
+        actor = _spawn_class(
+            unreal.CineCameraActor, k0["loc"], k0["rot"], "camera '%s'" % cam["label"]
+        )
+        if actor is None:
+            bindings.append(None)  # keep shot indices aligned
+            continue
+        spawned["cameras"] += 1
         actor.set_actor_label(cam["label"])
         comp = actor.get_cine_camera_component()
         # Set focal length BEFORE binding: spawnables snapshot a template here.
@@ -421,9 +485,12 @@ def build_scene():
                 fchan.add_key(_secs_to_frame(seq, kf["t"]), float(kf["focal"]))
 
     # --- camera cut track ----------------------------------------------
-    if bindings:
+    if any(b is not None for b in bindings):
         cut = seq.add_track(unreal.MovieSceneCameraCutTrack)
         for shot in SCENE["shots"]:
+            if bindings[shot["cam"]] is None:
+                unreal.log_error("VSM: shot '%s' skipped -- its camera failed to spawn" % shot["name"])
+                continue
             cs = cut.add_section()
             cs.set_start_frame_seconds(shot["start"])
             cs.set_end_frame_seconds(shot["end"])
@@ -431,16 +498,28 @@ def build_scene():
 
     unreal.EditorAssetLibrary.save_loaded_asset(seq)
     unreal.log(
-        "virtualSetmaker: built '%s' -- %d actors, %d props, %d wall segments, %d lights, %d cameras"
+        "virtualSetmaker: built '%s' -- spawned %d/%d actors, %d/%d props (%d parts), "
+        "%d/%d wall segments, %d/%d lights, %d/%d cameras"
         % (
             SCENE["name"],
-            len(SCENE["actors"]),
-            len(SCENE["props"]),
-            len(SCENE["wall_segments"]),
-            len(SCENE["lights"]),
-            len(SCENE["cameras"]),
+            spawned["actors"], len(SCENE["actors"]),
+            spawned["props"], len(SCENE["props"]),
+            spawned["prop_parts"],
+            spawned["walls"], len(SCENE["wall_segments"]),
+            spawned["lights"], len(SCENE["lights"]),
+            spawned["cameras"], len(SCENE["cameras"]),
         )
     )
+    if not SCENE["props"]:
+        unreal.log_warning(
+            "virtualSetmaker: this scene data contains NO props. If your Shot Designer "
+            "scene does have props, re-export with the latest converter and check its "
+            "warnings -- unsupported object types are reported there."
+        )
+    if _FAILURES:
+        unreal.log_warning(
+            "virtualSetmaker: %d spawn(s) failed: %s" % (len(_FAILURES), ", ".join(_FAILURES))
+        )
     return seq
 
 

@@ -93,3 +93,15 @@ def test_static_scene_has_no_focal_track():
     # switched off in the embedded data for a constant-focal camera.
     payload = _embedded_payload(script)
     assert payload["cameras"][0]["focal_animated"] is False
+
+
+def test_generated_script_reports_spawn_failures_instead_of_dying():
+    script = build_script(_example_scene())
+    # Every spawn goes through the guarded helper: a None/raising spawn is
+    # logged and skipped, never allowed to abort the rest of the build.
+    assert "VSM: could not spawn" in script
+    assert "_FAILURES" in script
+    # The end-of-run summary reports what actually spawned vs what the scene
+    # data contains, and calls out a scene with no props at all.
+    assert "spawned %d/%d actors" in script
+    assert "contains NO props" in script

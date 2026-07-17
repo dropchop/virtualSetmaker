@@ -8,6 +8,7 @@ however it likes (stderr notes for the CLI, log pane for the GUI).
 from __future__ import annotations
 
 import os
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .emit import write_script
@@ -43,6 +44,20 @@ def default_output_name(input_path: str) -> str:
 
 
 def report_for(scene: Scene, input_path: str, output_path: str) -> BuildReport:
+    warnings = scene.validate()
+    if scene.skipped_objects:
+        counts = Counter(scene.skipped_objects)
+        for tag, n in sorted(counts.items()):
+            warnings.append(
+                f"skipped {n} <{tag}> object(s): this Shot Designer object type is not "
+                f"supported yet, so nothing was generated for it"
+            )
+    if scene.extra_snapshots:
+        warnings.append(
+            f"the document has {scene.extra_snapshots} snapshot(s) beyond the current one; "
+            f"only the current snapshot is converted — objects that exist only in other "
+            f"snapshots will not appear"
+        )
     return BuildReport(
         input_path=input_path,
         output_path=output_path,
@@ -52,7 +67,7 @@ def report_for(scene: Scene, input_path: str, output_path: str) -> BuildReport:
         lights=len(scene.lights),
         cameras=len(scene.cameras),
         shots=len(scene.shots),
-        warnings=scene.validate(),
+        warnings=warnings,
         unmatched_kinds=sorted(
             {p.kind for p in scene.props if p.kind and match_kind(p.kind) is None}
         ),
