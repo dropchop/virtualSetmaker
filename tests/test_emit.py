@@ -1,6 +1,8 @@
 import json
 import os
 
+import pytest
+
 from virtualsetmaker.emit import build_script
 from virtualsetmaker.ir import Scene
 
@@ -12,9 +14,23 @@ def _example_scene():
         return Scene.from_json(fh.read())
 
 
+def _embedded_payload(script):
+    return json.loads(script.split('SCENE = json.loads(r"""', 1)[1].split('"""', 1)[0])
+
+
 def test_generated_script_is_syntactically_valid_python():
     script = build_script(_example_scene())
     compile(script, "<generated>", "exec")  # raises SyntaxError if malformed
+
+
+def test_generated_script_executes_up_to_the_editor_guard():
+    # Outside Unreal the script must parse its embedded payload and then exit
+    # with the friendly SystemExit — executing (not just compiling) the
+    # top-level catches non-Python artifacts in the payload, e.g. the JSON
+    # false/true/null that a compile check cannot see (NameError in UE 5.8).
+    script = build_script(_example_scene())
+    with pytest.raises(SystemExit):
+        exec(compile(script, "<generated>", "exec"), {"__name__": "__main__"})
 
 
 def test_generated_script_uses_modern_unreal_api():
@@ -45,7 +61,7 @@ def test_animated_camera_emits_focal_length_track():
 def test_embedded_scene_payload_matches_ir_counts():
     scene = _example_scene()
     script = build_script(scene)
-    payload = json.loads(script.split("SCENE = ", 1)[1].split("\n\n", 1)[0])
+    payload = _embedded_payload(script)
     assert len(payload["actors"]) == len(scene.actors)
     assert len(payload["cameras"]) == len(scene.cameras)
     # closed=false wall of 4 points -> 3 segments
@@ -72,5 +88,5 @@ def test_static_scene_has_no_focal_track():
     compile(script, "<generated>", "exec")
     # The focal-animation branch exists in the runtime template but must be
     # switched off in the embedded data for a constant-focal camera.
-    payload = json.loads(script.split("SCENE = ", 1)[1].split("\n\n", 1)[0])
+    payload = _embedded_payload(script)
     assert payload["cameras"][0]["focal_animated"] is False
