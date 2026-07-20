@@ -295,8 +295,7 @@ def _spawn_class(cls, loc, rot, what):
     return _spawn(lambda: _actor_sub.spawn_actor_from_class(cls, _v(loc), _r(rot)), what)
 
 
-def _secs_to_frame(seq, t):
-    tick = seq.get_tick_resolution()
+def _secs_to_frame(tick, t):
     return unreal.FrameNumber(int(round(t * tick.numerator / tick.denominator)))
 
 
@@ -317,115 +316,118 @@ def build_scene():
             )
     spawned = {"actors": 0, "props": 0, "prop_parts": 0, "walls": 0, "lights": 0, "cameras": 0}
 
-    # --- actors ---------------------------------------------------------
-    for a in SCENE["actors"]:
-        what = "actor '%s'" % a["label"]
-        if mannequin is not None:
-            actor = _spawn_object(mannequin, a["loc"], [0.0, a["yaw"], 0.0], what)
-        elif cylinder is not None:
-            h = a["height_cm"]
-            loc = [a["loc"][0], a["loc"][1], h / 2.0]
-            actor = _spawn_object(cylinder, loc, [0.0, a["yaw"], 0.0], what)
-            if actor is not None:
-                actor.set_actor_scale3d(unreal.Vector(0.4, 0.4, h / 100.0))
-        else:
-            unreal.log_error("VSM: no mannequin and no cylinder mesh -- skipping " + what)
-            continue
-        if actor is None:
-            continue
-        spawned["actors"] += 1
-        actor.set_actor_label("Actor_" + a["label"])
-        actor.set_folder_path("VSM/Actors")
-
-    # --- props (multi-part blockouts) ------------------------------------
-    keep_world = unreal.AttachmentRule.KEEP_WORLD
-    for p in SCENE["props"]:
-        if not p["parts"]:
-            unreal.log_warning(
-                "VSM: prop '%s' (kind %r) has no blockout parts -- nothing to spawn"
-                % (p["label"], p["kind"])
-            )
-            continue
-        parent = None
-        for i, part in enumerate(p["parts"]):
-            mesh = meshes.get(part["shape"]) or cube
-            if mesh is None:
-                continue
-            actor = _spawn_object(
-                mesh, part["loc"], part["rot"], "prop '%s' part %d" % (p["label"], i)
-            )
-            if actor is None:
-                continue
-            spawned["prop_parts"] += 1
-            actor.set_actor_scale3d(_v(part["scale"]))
-            if parent is None:
-                parent = actor
-                actor.set_actor_label("Prop_" + p["label"])
+    # One transaction for all the blockout geometry: a single undo entry and
+    # one batch of editor notifications instead of one per spawned actor.
+    with unreal.ScopedEditorTransaction("virtualSetmaker build"):
+        # --- actors ---------------------------------------------------------
+        for a in SCENE["actors"]:
+            what = "actor '%s'" % a["label"]
+            if mannequin is not None:
+                actor = _spawn_object(mannequin, a["loc"], [0.0, a["yaw"], 0.0], what)
+            elif cylinder is not None:
+                h = a["height_cm"]
+                loc = [a["loc"][0], a["loc"][1], h / 2.0]
+                actor = _spawn_object(cylinder, loc, [0.0, a["yaw"], 0.0], what)
+                if actor is not None:
+                    actor.set_actor_scale3d(unreal.Vector(0.4, 0.4, h / 100.0))
             else:
-                actor.set_actor_label("Prop_%s_part%d" % (p["label"], i))
-                actor.attach_to_actor(parent, "", keep_world, keep_world, keep_world, False)
-            actor.set_folder_path("VSM/Props")
-        if parent is not None:
-            spawned["props"] += 1
-
-    # --- walls (blockout) -------------------------------------------
-    if cube is not None:
-        for w in SCENE["wall_segments"]:
-            actor = _spawn_object(cube, w["loc"], [0.0, w["yaw"], 0.0], "wall '%s'" % w["label"])
+                unreal.log_error("VSM: no mannequin and no cylinder mesh -- skipping " + what)
+                continue
             if actor is None:
                 continue
-            spawned["walls"] += 1
-            actor.set_actor_scale3d(
-                unreal.Vector(w["length"] / 100.0, WALL_THICKNESS_CM / 100.0, WALL_HEIGHT_CM / 100.0)
-            )
-            actor.set_actor_label(w["label"])
-            actor.set_folder_path("VSM/Set")
+            spawned["actors"] += 1
+            actor.set_actor_label("Actor_" + a["label"])
+            actor.set_folder_path("VSM/Actors")
 
-    # --- lights ---------------------------------------------------------
-    light_classes = {
-        "spot": unreal.SpotLight,
-        "rect": unreal.RectLight,
-        "point": unreal.PointLight,
-        "directional": unreal.DirectionalLight,
-    }
-    for lt in SCENE["lights"]:
-        # rig/fixture placeholder geometry, grouped under its first part
-        rig = None
-        for i, part in enumerate(lt["parts"]):
-            mesh = meshes.get(part["shape"]) or cube
-            if mesh is None:
+        # --- props (multi-part blockouts) ------------------------------------
+        keep_world = unreal.AttachmentRule.KEEP_WORLD
+        for p in SCENE["props"]:
+            if not p["parts"]:
+                unreal.log_warning(
+                    "VSM: prop '%s' (kind %r) has no blockout parts -- nothing to spawn"
+                    % (p["label"], p["kind"])
+                )
                 continue
-            actor = _spawn_object(
-                mesh, part["loc"], part["rot"], "light rig '%s' part %d" % (lt["label"], i)
-            )
-            if actor is None:
-                continue
-            actor.set_actor_scale3d(_v(part["scale"]))
-            if rig is None:
-                rig = actor
-                actor.set_actor_label("LightRig_" + lt["label"])
-            else:
-                actor.set_actor_label("LightRig_%s_part%d" % (lt["label"], i))
-                actor.attach_to_actor(rig, "", keep_world, keep_world, keep_world, False)
-            actor.set_folder_path("VSM/Lights")
+            parent = None
+            for i, part in enumerate(p["parts"]):
+                mesh = meshes.get(part["shape"]) or cube
+                if mesh is None:
+                    continue
+                actor = _spawn_object(
+                    mesh, part["loc"], part["rot"], "prop '%s' part %d" % (p["label"], i)
+                )
+                if actor is None:
+                    continue
+                spawned["prop_parts"] += 1
+                actor.set_actor_scale3d(_v(part["scale"]))
+                if parent is None:
+                    parent = actor
+                    actor.set_actor_label("Prop_" + p["label"])
+                else:
+                    actor.set_actor_label("Prop_%s_part%d" % (p["label"], i))
+                    actor.attach_to_actor(parent, "", keep_world, keep_world, keep_world, False)
+                actor.set_folder_path("VSM/Props")
+            if parent is not None:
+                spawned["props"] += 1
 
-        # the actual light, attached to the rig so they move together
-        if lt["light_loc"] is not None:
-            light = _spawn_class(
-                light_classes.get(lt["cls"], unreal.SpotLight),
-                lt["light_loc"],
-                lt["light_rot"],
-                "light '%s'" % lt["label"],
-            )
-            if light is None:
-                continue
-            spawned["lights"] += 1
-            light.set_actor_label("Light_" + lt["label"])
-            light.set_folder_path("VSM/Lights")
-            if rig is not None:
-                light.attach_to_actor(rig, "", keep_world, keep_world, keep_world, False)
-        elif rig is not None:
-            spawned["lights"] += 1  # rigging-only fixture (e.g. speed rail)
+        # --- walls (blockout) -------------------------------------------
+        if cube is not None:
+            for w in SCENE["wall_segments"]:
+                actor = _spawn_object(cube, w["loc"], [0.0, w["yaw"], 0.0], "wall '%s'" % w["label"])
+                if actor is None:
+                    continue
+                spawned["walls"] += 1
+                actor.set_actor_scale3d(
+                    unreal.Vector(w["length"] / 100.0, WALL_THICKNESS_CM / 100.0, WALL_HEIGHT_CM / 100.0)
+                )
+                actor.set_actor_label(w["label"])
+                actor.set_folder_path("VSM/Set")
+
+        # --- lights ---------------------------------------------------------
+        light_classes = {
+            "spot": unreal.SpotLight,
+            "rect": unreal.RectLight,
+            "point": unreal.PointLight,
+            "directional": unreal.DirectionalLight,
+        }
+        for lt in SCENE["lights"]:
+            # rig/fixture placeholder geometry, grouped under its first part
+            rig = None
+            for i, part in enumerate(lt["parts"]):
+                mesh = meshes.get(part["shape"]) or cube
+                if mesh is None:
+                    continue
+                actor = _spawn_object(
+                    mesh, part["loc"], part["rot"], "light rig '%s' part %d" % (lt["label"], i)
+                )
+                if actor is None:
+                    continue
+                actor.set_actor_scale3d(_v(part["scale"]))
+                if rig is None:
+                    rig = actor
+                    actor.set_actor_label("LightRig_" + lt["label"])
+                else:
+                    actor.set_actor_label("LightRig_%s_part%d" % (lt["label"], i))
+                    actor.attach_to_actor(rig, "", keep_world, keep_world, keep_world, False)
+                actor.set_folder_path("VSM/Lights")
+
+            # the actual light, attached to the rig so they move together
+            if lt["light_loc"] is not None:
+                light = _spawn_class(
+                    light_classes.get(lt["cls"], unreal.SpotLight),
+                    lt["light_loc"],
+                    lt["light_rot"],
+                    "light '%s'" % lt["label"],
+                )
+                if light is None:
+                    continue
+                spawned["lights"] += 1
+                light.set_actor_label("Light_" + lt["label"])
+                light.set_folder_path("VSM/Lights")
+                if rig is not None:
+                    light.attach_to_actor(rig, "", keep_world, keep_world, keep_world, False)
+            elif rig is not None:
+                spawned["lights"] += 1  # rigging-only fixture (e.g. speed rail)
 
     # --- level sequence + cameras --------------------------------------
     tools = unreal.AssetToolsHelpers.get_asset_tools()
@@ -434,6 +436,7 @@ def build_scene():
     )
     seq.set_display_rate(unreal.FrameRate(int(SCENE["fps"]), 1))
     seq.set_playback_end_seconds(float(SCENE["duration"]))
+    tick = seq.get_tick_resolution()  # fetched once; constant for the sequence
 
     # UE 5.6+ moved spawnable creation to the Level Sequence Editor Subsystem,
     # which only operates on the sequence currently open in Sequencer.
@@ -463,7 +466,7 @@ def build_scene():
         section.set_end_frame_seconds(max(cam["keys"][-1]["t"], float(SCENE["duration"])))
         chans = section.get_all_channels()  # locX,locY,locZ, rotX(roll),rotY(pitch),rotZ(yaw), sclX,Y,Z
         for kf in cam["keys"]:
-            f = _secs_to_frame(seq, kf["t"])
+            f = _secs_to_frame(tick, kf["t"])
             loc, rot = kf["loc"], kf["rot"]  # rot = [pitch, yaw, roll]
             chans[0].add_key(f, loc[0])
             chans[1].add_key(f, loc[1])
@@ -482,7 +485,7 @@ def build_scene():
             fsection.set_end_frame_seconds(cam["keys"][-1]["t"])
             fchan = fsection.get_all_channels()[0]
             for kf in cam["keys"]:
-                fchan.add_key(_secs_to_frame(seq, kf["t"]), float(kf["focal"]))
+                fchan.add_key(_secs_to_frame(tick, kf["t"]), float(kf["focal"]))
 
     # --- camera cut track ----------------------------------------------
     if any(b is not None for b in bindings):

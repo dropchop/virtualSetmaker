@@ -37,7 +37,11 @@ def probe(path: str) -> ProbeResult:
         raise NotShotDesignerFile(
             f"{path!r} is not valid XML; expected a Shot Designer .hcw scene ({exc})."
         ) from exc
+    return probe_root(root, path)
 
+
+def probe_root(root: ET.Element, path: str) -> ProbeResult:
+    """Validate an already-parsed document root (``path`` is for messages only)."""
     if root.tag != "ShotDesignerDocument":
         raise NotShotDesignerFile(
             f"{path!r} has root <{root.tag}>, expected <ShotDesignerDocument>."

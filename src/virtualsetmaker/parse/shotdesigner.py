@@ -31,7 +31,7 @@ import xml.etree.ElementTree as ET
 from typing import Optional
 
 from ..ir import Actor, Camera, CameraKeyframe, Light, Prop, Scene, Shot, Vec3, Wall
-from .probe import probe
+from .probe import NotShotDesignerFile, probe_root
 
 # Default lens by Shot Designer <cameraStyle>; refined once we see more styles.
 _DEFAULT_FOCAL_MM = 35.0
@@ -83,8 +83,13 @@ def _uid(obj: ET.Element, fallback: str) -> str:
 
 def parse_file(path: str, units_per_meter: float = 100.0) -> Scene:
     """Parse a ``.hcw`` file at ``path`` into a :class:`Scene`."""
-    probe(path)  # raises NotShotDesignerFile on anything unexpected
-    root = ET.parse(path).getroot()
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as exc:
+        raise NotShotDesignerFile(
+            f"{path!r} is not valid XML; expected a Shot Designer .hcw scene ({exc})."
+        ) from exc
+    probe_root(root, path)  # raises NotShotDesignerFile on anything unexpected
     scene = _parse_root(root, units_per_meter)
     scene.name = os.path.splitext(os.path.basename(path))[0]
     return scene
@@ -205,6 +210,8 @@ def _assemble_cameras(raw_cameras: list[dict], tracks: list[dict], camera_speed:
     for c in raw_cameras:
         chains.setdefault(find(c["uid"]), []).append(c)
 
+    track_by_pair = {(t["from"], t["to"]): t for t in cam_tracks}
+
     speed_mps = max(camera_speed, 1.0) * _DOLLY_MPS_PER_SPEED
     cameras: list[Camera] = []
     for idx, members in enumerate(chains.values()):
@@ -227,10 +234,6 @@ def _assemble_cameras(raw_cameras: list[dict], tracks: list[dict], camera_speed:
                 )
             )
             continue
-
-        track_by_pair = {}
-        for t in cam_tracks:
-            track_by_pair[(t["from"], t["to"])] = t
 
         # Walk consecutive stops, splicing in each track's intermediate points
         # (they carry the bow of a curved path; endpoints duplicate the stops).
