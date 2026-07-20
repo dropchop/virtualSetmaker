@@ -310,6 +310,7 @@ def _parse_character(obj: ET.Element, loc, idx: int) -> Actor:
         yaw_deg=_yaw_deg(obj),
         height_m=1.65 if female else 1.8,
         color=color,
+        female=female,
     )
 
 
@@ -325,6 +326,10 @@ def _parse_prop(obj: ET.Element, loc, idx: int) -> Prop:
         location=loc(obj),
         yaw_deg=_yaw_deg(obj),
         scale=Vec3(sx, sy, 1.0),
+        # A non-empty <snapPath> names the wall this set piece is glued to
+        # (doors/windows). Its angle is then the wall's direction, not a user
+        # rotation — the emitter treats the two cases differently.
+        wall_snapped=bool((obj.findtext("snapPath") or "").strip()),
     )
 
 

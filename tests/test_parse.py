@@ -103,3 +103,10 @@ def test_sample_has_no_skipped_objects():
     scene = parse_file(SAMPLE)
     assert scene.skipped_objects == []
     assert scene.extra_snapshots == 0
+
+
+def test_character_female_flag_is_parsed():
+    scene = parse_file(SAMPLE)
+    by_id = {a.id: a for a in scene.actors}
+    assert by_id["firstcharacter"].female is False
+    assert by_id["secondcharacter"].female is True

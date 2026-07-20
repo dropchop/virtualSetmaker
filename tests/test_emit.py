@@ -105,3 +105,15 @@ def test_generated_script_reports_spawn_failures_instead_of_dying():
     # data contains, and calls out a scene with no props at all.
     assert "spawned %d/%d actors" in script
     assert "contains NO props" in script
+
+
+def test_actors_carry_the_female_flag_for_manny_vs_quinn():
+    script = build_script(_example_scene())
+    # The runtime picks SKM_Quinn for female (Type B) characters and SKM_Manny
+    # otherwise, with a -90 yaw offset because mannequin meshes face +Y.
+    assert "MANNY_CANDIDATES" in script
+    assert "QUINN_CANDIDATES" in script
+    assert "MANNEQUIN_YAW_OFFSET = -90.0" in script
+    assert 'quinn if a["female"] else manny' in script
+    # And the missing-content case tells the user how to add the pack.
+    assert "Add Feature or Content Pack" in script

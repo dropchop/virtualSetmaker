@@ -77,11 +77,15 @@ is opened in Sequencer as part of the build (required by the UE 5.6+
 ## Scale & conventions
 
 * **1 Shot Designer unit = 1 cm** (override with `--units-per-meter`).
-* Shot Designer positions are screen-space (`+y` down) with angles in radians;
-  the one screen→Unreal axis/handedness flip lives in
-  [`coords.py`](src/virtualsetmaker/coords.py) so it's calibrated in one place.
-* Actors render as the UE **Mannequin** (`SKM_Manny`), falling back to a capsule
-  if the mesh isn't in the project.
+* Shot Designer positions are screen-space (`+y` down) with angles in radians.
+  Both that frame and Unreal's are left-handed, so coordinates and yaw carry
+  over **unchanged** (chirality preserved — scenes and shots are never
+  mirrored); the whole conversion is pinned down in one place,
+  [`coords.py`](src/virtualsetmaker/coords.py).
+* Actors render as the UE **Mannequin** — `SKM_Manny`, or `SKM_Quinn` for
+  Shot Designer Type B (female) characters — facing where the character faces,
+  with a capsule fallback (plus instructions in the Output Log for adding the
+  Third Person content pack) if the meshes aren't in the project.
 
 ## Prop blockouts
 
@@ -128,6 +132,47 @@ added in a few lines. Parts spawn grouped (attached to the first part) in the
   them). Timing comes from path length at the scene's camera-speed index
   (speed 3 ≈ 0.75 m/s dolly; `_DOLLY_MPS_PER_SPEED` in `parse/shotdesigner.py`).
   Verified against straight-line and curved-move samples in `samples/`.
+
+## Changelog
+
+### 2026-07-17
+
+* **Actors spawn as UE Mannequins** — `SKM_Manny` for Type A characters,
+  `SKM_Quinn` for Type B (the `.hcw` `<female>` flag), with the correct facing
+  (mannequin meshes are authored facing +Y, so spawns apply a −90° yaw
+  offset). If the project lacks the meshes, the Output Log explains how to add
+  the Third Person content pack instead of silently dropping capsules.
+* **Fixed mirrored scenes** — the screen→Unreal conversion previously negated
+  Y, which reflected the entire scene: props appeared on the wrong side of the
+  room and every through-camera shot was flipped left/right. Coordinates and
+  yaw now carry over unchanged, so Unreal matches the Shot Designer plan
+  exactly.
+* **Calibrated prop orientation** — freestanding props store the direction of
+  their *back* in the `.hcw` (a sofa placed against a wall now sits flush,
+  facing the room); doors/windows snapped into a wall follow the wall's
+  direction, with door panels swinging into the room.
+* **Export diagnostics** — unsupported Shot Designer object types and
+  multi-snapshot documents are reported at export instead of dropped silently;
+  the generated script survives individual spawn failures, names them in the
+  Output Log, and reports spawned-vs-expected counts per category.
+* **Known issue** — prop footprints are real-world recipe dimensions ×
+  `objectScale`, but some Shot Designer icons (notably tables) have native
+  sizes larger than real-world furniture, so those props come out small.
+  Per-icon size calibration is in progress.
+
+### 2026-07-16
+
+* **Camera moves** — stop marks + dolly `<Track>` chains become one keyframed
+  CineCamera per move, with curve bow preserved and timing from path length at
+  the scene's camera-speed index.
+* **Unreal 5.8 target** (compatible 5.6+) — spawnables go through
+  `LevelSequenceEditorSubsystem`.
+* **Fixes** — generated-script rotations (the UE Python `Rotator` constructor
+  is `(roll, pitch, yaw)`, not the C++ order), scene data embedded as JSON
+  (not pasted as a Python literal), and the Windows standalone-exe build.
+* **Initial release** — `.hcw` → IR → Unreal editor Python script; full prop
+  palette blockout library; lights with real Unreal light types; tkinter GUI
+  and Windows packaging.
 
 ## Layout
 

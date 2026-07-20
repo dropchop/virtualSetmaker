@@ -8,20 +8,22 @@ def test_meters_to_centimeters_scale():
     assert z == 200.0
 
 
-def test_y_axis_is_flipped():
-    # Shot Designer screen-space +y (down) maps to Unreal -Y.
+def test_axes_carry_over_unchanged():
+    # Shot Designer's floor-plan frame and Unreal's frame are both left-handed:
+    # the identity is the chirality-preserving map. A Y flip would mirror the
+    # scene (props on the wrong side of the room, every shot flipped).
     _x, y, _z = ir_to_ue_location(Vec3(0.0, 3.0, 0.0))
-    assert y == -300.0
+    assert y == 300.0
 
 
-def test_yaw_sign_flips_to_match_y_flip():
-    assert ir_to_ue_yaw(90.0) == -90.0
+def test_yaw_carries_over_unchanged():
+    assert ir_to_ue_yaw(90.0) == 90.0
 
 
 def test_rotation_tuple_order_is_pitch_yaw_roll():
     pitch, yaw, roll = ir_to_ue_rotation(10.0, 20.0, 30.0)
     assert pitch == 10.0
-    assert yaw == -20.0
+    assert yaw == 20.0
     assert roll == 30.0
 
 
