@@ -107,6 +107,53 @@ def test_generated_script_reports_spawn_failures_instead_of_dying():
     assert "contains NO props" in script
 
 
+def test_camera_filmback_is_applied_from_sensor_data():
+    script = build_script(_example_scene())
+    # Sensor size is set on the CineCamera filmback before binding (the
+    # template snapshot), alongside the focal length.
+    assert 'comp.get_editor_property("filmback")' in script
+    assert '"sensor_width"' in script
+    assert '"sensor_height"' in script
+    payload = _embedded_payload(script)
+    assert payload["cameras"][0]["sensor"] == [36.0, 24.0]
+
+
+def test_actor_colors_reach_the_capsule_tint():
+    scene = Scene.from_dict(
+        {
+            "actors": [
+                {"id": "a", "name": "a", "location": {"x": 0, "y": 0, "z": 0},
+                 "color_rgb": [252, 131, 123]},
+                {"id": "b", "name": "b", "location": {"x": 1, "y": 0, "z": 0},
+                 "color": "Blue"},
+                {"id": "c", "name": "c", "location": {"x": 2, "y": 0, "z": 0}},
+            ]
+        }
+    )
+    script = build_script(scene)
+    assert "_tint(actor" in script
+    assert "BASIC_SHAPE_MATERIAL" in script
+    payload = _embedded_payload(script)
+    rgbs = [a["rgb"] for a in payload["actors"]]
+    assert rgbs[0] == [round(252 / 255, 4), round(131 / 255, 4), round(123 / 255, 4)]
+    assert rgbs[1] == [round(148 / 255, 4), round(184 / 255, 4), round(255 / 255, 4)]
+    assert rgbs[2] is None  # no color info: left untinted
+
+
+def test_actor_color_rgb_survives_ir_json_roundtrip():
+    scene = Scene.from_dict(
+        {"actors": [{"id": "a", "name": "a", "location": {"x": 0, "y": 0, "z": 0},
+                     "color_rgb": [1, 2, 3]}]}
+    )
+    again = Scene.from_json(scene.to_json())
+    assert again.actors[0].color_rgb == [1, 2, 3]
+    # ...and absence stays absence.
+    bare = Scene.from_json(Scene.from_dict(
+        {"actors": [{"id": "a", "name": "a", "location": {"x": 0, "y": 0, "z": 0}}]}
+    ).to_json())
+    assert bare.actors[0].color_rgb is None
+
+
 def test_actors_carry_the_female_flag_for_manny_vs_quinn():
     script = build_script(_example_scene())
     # The runtime picks SKM_Quinn for female (Type B) characters and SKM_Manny

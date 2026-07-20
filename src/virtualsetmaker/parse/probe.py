@@ -9,7 +9,7 @@ clear message for future file versions.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 MAGIC = "Hollywood Camera Work Shot Designer Scene"
 SUPPORTED_FILE_VERSIONS = {"1"}
@@ -24,6 +24,7 @@ class ProbeResult:
     app_version: str
     file_version: str
     magic: str
+    warnings: list[str] = field(default_factory=list)
 
 
 def probe(path: str) -> ProbeResult:
@@ -55,8 +56,15 @@ def probe_root(root: ET.Element, path: str) -> ProbeResult:
 
     file_version = root.findtext("DocumentPreamble/fileVersion", default="")
     app_version = root.findtext("DocumentPreamble/appVersion", default="")
+    warnings: list[str] = []
     if file_version not in SUPPORTED_FILE_VERSIONS:
         # A newer file version may still parse; warn rather than hard-fail.
-        pass
+        warnings.append(
+            f"file version {file_version!r} is not the tested "
+            f"{sorted(SUPPORTED_FILE_VERSIONS)}; parsing will be attempted but "
+            f"newer Shot Designer features may be missing from the result"
+        )
 
-    return ProbeResult(app_version=app_version, file_version=file_version, magic=magic)
+    return ProbeResult(
+        app_version=app_version, file_version=file_version, magic=magic, warnings=warnings
+    )

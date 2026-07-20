@@ -22,14 +22,19 @@ PYTHONPATH=src python -m virtualsetmaker.cli --help
 ## Use
 
 ```bash
-# Parse a Shot Designer scene and emit an Unreal script:
-vsm build samples/Sceneforclaude.hcw -o scene.py
+# Parse a Shot Designer scene and emit an Unreal script
+# (default output: Sceneforclaude_unreal.py beside the input; -o to override):
+vsm build samples/Sceneforclaude.hcw
+
+# Tunables via flags (defaults are 35mm, 1.5 m camera height, 2.5 m walls):
+vsm build scene.hcw --focal-length 50 --camera-height 1.7 --wall-height 300 \
+         --frame-rate 30 --content-path /Game/Blocking --units-per-meter 100
 
 # Inspect the intermediate representation as JSON:
 vsm parse samples/Sceneforclaude.hcw -o scene.json
 
 # Emit straight from a hand-authored IR (no .hcw needed) — good for demos:
-vsm emit examples/example_scene.json -o scene.py
+vsm emit examples/example_scene.json
 
 # Just confirm a file is a Shot Designer scene:
 vsm probe samples/Sceneforclaude.hcw
@@ -40,6 +45,43 @@ vsm props
 # Open the graphical exporter:
 vsm gui        # (or run `vsm-gui`)
 ```
+
+## Config file
+
+Every tunable can also be set once in `~/.virtualsetmaker.json` (created by the
+GUI; hand-editable). Precedence: **CLI flag > config `defaults` > built-in.**
+Both `vsm` and the GUI honor the `defaults` section:
+
+```json
+{
+  "input_dir": "C:/scenes",
+  "output_dir": "C:/exports",
+  "units_per_meter": 100,
+  "defaults": {
+    "focal_length_mm": 35,
+    "camera_height_m": 1.5,
+    "wall_height_cm": 250,
+    "wall_thickness_cm": 10,
+    "frame_rate": 24,
+    "ue_content_path": "/Game/VSM",
+    "manny_paths": ["/Game/MyChars/Hero.Hero"],
+    "quinn_paths": ["/Game/MyChars/Heroine.Heroine"]
+  }
+}
+```
+
+| key | meaning | built-in |
+|---|---|---|
+| `focal_length_mm` | lens for every camera (Shot Designer stores none) | 35 |
+| `camera_height_m` | camera height (Shot Designer is 2D top-down) | 1.5 |
+| `wall_height_cm` / `wall_thickness_cm` | wall blockout dimensions | 250 / 10 |
+| `frame_rate` | level-sequence display rate | 24 |
+| `ue_content_path` | where the sequence asset is created | `/Game/VSM` |
+| `manny_paths` / `quinn_paths` | skeletal-mesh asset paths tried for actors | UE mannequins |
+| `units_per_meter` | Shot Designer units per meter | 100 |
+
+`input_dir`/`output_dir`/top-level `units_per_meter` are the GUI's remembered
+state; unknown keys and bad values are ignored, never fatal.
 
 ## GUI
 
@@ -120,6 +162,56 @@ on the right shape. Unmatched kinds fall back to a labeled 1 m cube and
 added in a few lines. Parts spawn grouped (attached to the first part) in the
 `VSM/Props` outliner folder, so each prop moves as one unit.
 
+### Adding a prop recipe
+
+Recipes live in [`emit/blockouts.py`](src/virtualsetmaker/emit/blockouts.py).
+Each is a list of primitive parts built with `_p(shape, offset, size, rot)`:
+
+* **Frame** (before the prop's own rotation): `+X` = width (right), `+Y` =
+  toward the prop's **front**, `+Z` = up.
+* `offset` — the part's center in **cm**, relative to the prop origin on the
+  floor. `size` — `[x, y, z]` extent in cm (basic-shape meshes are 100 cm, so
+  actor scale = size/100). `rot` — optional `[pitch, yaw, roll]` degrees
+  (pitched cylinders make car wheels, a rolled one makes a tank barrel).
+* Add the recipe under its Shot Designer `objectKey`, plus an `ALIASES` row for
+  name variants — **order matters**: more specific substrings must come first
+  (`ARMCHAIR` before `CHAIR`, `CARPET` before `CAR`).
+
+### Icon size calibration (`SD_NATIVE`)
+
+Shot Designer's `objectScaleX/Y` is relative to each icon's **native art size**
+(undocumented, varies per icon) — not to our real-world recipes. For icons
+whose art is bigger than real furniture, `recipe × objectScale` comes out too
+small. The `SD_NATIVE` table in `blockouts.py` records native spans in SD
+units; with an entry present, the emitted footprint becomes
+**`objectScale × native`** — exactly the icon's on-canvas span. Without one,
+behavior is the historical `recipe × objectScale` (verified correct for sofas
+and doors).
+
+To calibrate an icon, use the **character icons as the yardstick** (a person's
+shoulder width ≈ 45 cm): on a Shot Designer canvas screenshot, measure the
+prop icon's span in pixels against a character icon's shoulder width, then
+`native = 45 × prop_px / char_px / objectScale`. The current table-icon value
+(160) is provisional, derived from `samples/one_with_table.hcw` assuming ~90 cm
+tables — refine it with a screenshot measurement if your tables read wrong.
+
+## Warnings and notes
+
+`vsm build`/`parse` (and the GUI log) can print:
+
+* `warning: skipped N <Tag> object(s)` — the `.hcw` contains a Shot Designer
+  object type the parser doesn't handle yet; nothing was generated for it.
+* `warning: the document has N snapshot(s) beyond the current one` — only the
+  current snapshot converts; objects existing only in other snapshots won't
+  appear.
+* `warning: file version '…' is not the tested ['1']` — a newer Shot Designer
+  file format; parsing is attempted but new features may be missing.
+* `note: no blockout recipe for prop kind '…'` — that prop spawned as a
+  generic 1 m cube (see *Adding a prop recipe*).
+
+Inside Unreal, the generated script logs `VSM:` lines for every spawn failure
+plus a final spawned-vs-expected summary per category.
+
 ## Status
 
 * **Static scenes** (placement of camera, actors, props, walls, lights): done,
@@ -134,6 +226,33 @@ added in a few lines. Parts spawn grouped (attached to the first part) in the
   Verified against straight-line and curved-move samples in `samples/`.
 
 ## Changelog
+
+### 2026-07-20
+
+* **Prop size calibration** — new `SD_NATIVE` table maps Shot Designer icons'
+  native art sizes so scaled props emit at their true on-canvas span
+  (`objectScale × native`). Table icons are calibrated (provisionally to
+  ~90 cm; see *Icon size calibration*): the sample scene's tables now export
+  at ~90 cm instead of 51–68 cm. Uncalibrated icons keep the old behavior.
+* **Config file + CLI flags** — every hardcoded default is now tunable: focal
+  length, camera height, wall height/thickness, frame rate, UE content path,
+  and mannequin asset paths, via `vsm build` flags or a `defaults` section in
+  `~/.virtualsetmaker.json` shared by the CLI and GUI (flag > config >
+  built-in).
+* **Camera filmback** — the sensor size carried in the IR (36×24 default) is
+  now applied to the CineCamera filmback, so focal lengths frame correctly.
+* **Actor colors** — Shot Designer character colors (the packed `<color>`
+  value) now tint the capsule-fallback actors; mannequin spawns keep their own
+  materials.
+* **CLI/GUI fixes** — `vsm build`/`parse`/`emit` print friendly `error:` lines
+  instead of tracebacks; `vsm build` default output is now `<name>_unreal.py`
+  beside the input (same convention as the GUI); the GUI no longer freezes
+  during a batch export (worker thread) and failures show their traceback in
+  the log pane (the windowed exe has no console to hide them in); an untested
+  `.hcw` file version now produces a warning instead of silence.
+* **Light table unified** — each light fixture now carries its Unreal light
+  class in one table; `SOFT`/`FRAME`/`LANTERN`/`BULB` kinds get matching rig
+  geometry instead of the generic stand.
 
 ### 2026-07-17
 
@@ -158,7 +277,7 @@ added in a few lines. Parts spawn grouped (attached to the first part) in the
 * **Known issue** — prop footprints are real-world recipe dimensions ×
   `objectScale`, but some Shot Designer icons (notably tables) have native
   sizes larger than real-world furniture, so those props come out small.
-  Per-icon size calibration is in progress.
+  *(Fixed 2026-07-20 via the `SD_NATIVE` calibration table.)*
 
 ### 2026-07-16
 
@@ -185,6 +304,7 @@ src/virtualsetmaker/
   emit/unreal_python.py IR → Unreal 5.8 Python script
   emit/blockouts.py     prop + light-fixture blockout recipes
   build.py              shared build core (used by CLI and GUI)
+  settings.py           shared config (~/.virtualsetmaker.json) + Defaults
   gui.py                tkinter exporter (vsm gui / vsm-gui)
   cli.py                the `vsm` command
 packaging/              PyInstaller spec + Windows one-click build script

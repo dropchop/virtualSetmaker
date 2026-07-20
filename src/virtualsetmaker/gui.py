@@ -8,34 +8,18 @@ entry point (console-free on Windows).
 
 from __future__ import annotations
 
-import json
 import os
+import queue
+import threading
 import traceback
+from dataclasses import replace
 
 import tkinter as tk
 from tkinter import filedialog, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from .build import build_hcw, default_output_name
-
-SETTINGS_PATH = os.path.join(os.path.expanduser("~"), ".virtualsetmaker.json")
-
-
-def _load_settings() -> dict:
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_settings(settings: dict) -> None:
-    try:
-        with open(SETTINGS_PATH, "w", encoding="utf-8") as fh:
-            json.dump(settings, fh, indent=2)
-    except OSError:
-        pass  # persistence is best-effort only
+from .settings import defaults_from_settings, load_settings as _load_settings, save_settings as _save_settings
 
 
 class App:
@@ -153,23 +137,55 @@ class App:
         self.settings["units_per_meter"] = upm
         _save_settings(self.settings)
 
+        # Config-file defaults apply here too; the spinbox overrides the units.
+        options = replace(defaults_from_settings(self.settings), units_per_meter=upm)
+
+        # Build on a worker thread so a big batch doesn't freeze the window.
+        # The worker never touches Tk: log lines flow through a queue drained
+        # on the Tk thread via `after`.
+        self.export_btn.state(["disabled"])
+        self._queue: queue.Queue = queue.Queue()
+        threading.Thread(
+            target=self._export_worker, args=(files, outdir, options), daemon=True
+        ).start()
+        self.root.after(100, self._drain_queue)
+
+    def _export_worker(self, files: list[str], outdir: str, options) -> None:
+        put = self._queue.put
         ok = 0
         for path in files:
             out_path = os.path.join(outdir, default_output_name(path))
             try:
-                report = build_hcw(path, out_path, units_per_meter=upm)
+                report = build_hcw(path, out_path, options=options)
             except Exception as exc:  # surface, don't crash the app
-                self._log(f"FAILED  {os.path.basename(path)}: {exc}", "err")
-                traceback.print_exc()
+                put(("log", f"FAILED  {os.path.basename(path)}: {exc}", "err"))
+                # The windowed exe has no console: the traceback must land in
+                # the log pane, not on an invisible stderr.
+                put(("log", traceback.format_exc(), "err"))
                 continue
             ok += 1
-            self._log(f"OK  {os.path.basename(path)} → {out_path}", "ok")
-            self._log(f"      {report.summary()}")
+            put(("log", f"OK  {os.path.basename(path)} → {out_path}", "ok"))
+            put(("log", f"      {report.summary()}", ""))
             for w in report.warnings:
-                self._log(f"      warning: {w}", "warn")
+                put(("log", f"      warning: {w}", "warn"))
             for kind in report.unmatched_kinds:
-                self._log(f"      note: no blockout recipe for {kind!r} (generic cube used)", "warn")
-        self._log(f"Done: {ok}/{len(files)} exported.\n", "ok" if ok == len(files) else "warn")
+                put(("log", f"      note: no blockout recipe for {kind!r} (generic cube used)", "warn"))
+        put(("done", ok, len(files)))
+
+    def _drain_queue(self) -> None:
+        while True:
+            try:
+                msg = self._queue.get_nowait()
+            except queue.Empty:
+                self.root.after(100, self._drain_queue)
+                return
+            if msg[0] == "done":
+                _kind, ok, total = msg
+                self._log(f"Done: {ok}/{total} exported.\n", "ok" if ok == total else "warn")
+                self.export_btn.state(["!disabled"])
+                return
+            _kind, line, tag = msg
+            self._log(line, tag)
 
     def _log(self, line: str, tag: str = "") -> None:
         self.log.configure(state="normal")

@@ -81,7 +81,12 @@ def _uid(obj: ET.Element, fallback: str) -> str:
     return obj.findtext("uniqueID") or fallback
 
 
-def parse_file(path: str, units_per_meter: float = 100.0) -> Scene:
+def parse_file(
+    path: str,
+    units_per_meter: float = 100.0,
+    focal_length_mm: float = _DEFAULT_FOCAL_MM,
+    camera_height_m: float = _DEFAULT_CAMERA_HEIGHT_M,
+) -> Scene:
     """Parse a ``.hcw`` file at ``path`` into a :class:`Scene`."""
     try:
         root = ET.parse(path).getroot()
@@ -89,17 +94,28 @@ def parse_file(path: str, units_per_meter: float = 100.0) -> Scene:
         raise NotShotDesignerFile(
             f"{path!r} is not valid XML; expected a Shot Designer .hcw scene ({exc})."
         ) from exc
-    probe_root(root, path)  # raises NotShotDesignerFile on anything unexpected
-    scene = _parse_root(root, units_per_meter)
+    result = probe_root(root, path)  # raises NotShotDesignerFile on anything unexpected
+    scene = _parse_root(root, units_per_meter, focal_length_mm, camera_height_m)
+    scene.notes.extend(result.warnings)
     scene.name = os.path.splitext(os.path.basename(path))[0]
     return scene
 
 
-def parse_string(text: str, units_per_meter: float = 100.0) -> Scene:
-    return _parse_root(ET.fromstring(text), units_per_meter)
+def parse_string(
+    text: str,
+    units_per_meter: float = 100.0,
+    focal_length_mm: float = _DEFAULT_FOCAL_MM,
+    camera_height_m: float = _DEFAULT_CAMERA_HEIGHT_M,
+) -> Scene:
+    return _parse_root(ET.fromstring(text), units_per_meter, focal_length_mm, camera_height_m)
 
 
-def _parse_root(root: ET.Element, units_per_meter: float) -> Scene:
+def _parse_root(
+    root: ET.Element,
+    units_per_meter: float,
+    focal_length_mm: float = _DEFAULT_FOCAL_MM,
+    camera_height_m: float = _DEFAULT_CAMERA_HEIGHT_M,
+) -> Scene:
     scene = Scene(units_per_meter=units_per_meter)
     upm = units_per_meter
 
@@ -115,9 +131,9 @@ def _parse_root(root: ET.Element, units_per_meter: float) -> Scene:
     for i, obj in enumerate(canvas):
         tag = obj.tag
         if tag == "Camera":
-            raw_cameras.append(_parse_raw_camera(obj, loc, i))
+            raw_cameras.append(_parse_raw_camera(obj, loc, i, camera_height_m))
         elif tag == "Track":
-            tracks.append(_parse_track(obj, upm))
+            tracks.append(_parse_track(obj, upm, camera_height_m))
         elif tag == "Character":
             scene.actors.append(_parse_character(obj, loc, i))
         elif tag in ("GenericProp", "GenericSet"):
@@ -135,7 +151,7 @@ def _parse_root(root: ET.Element, units_per_meter: float) -> Scene:
     scene.extra_snapshots = int(_ftext(root.find("DocumentPostScript"), "numSnapshot", 0.0))
 
     camera_speed = _ftext(root.find("CurrentSnapshot/TimeSlices/TimeNumber"), "cameraSpeed", 3.0)
-    scene.cameras = _assemble_cameras(raw_cameras, tracks, camera_speed)
+    scene.cameras = _assemble_cameras(raw_cameras, tracks, camera_speed, focal_length_mm)
 
     move_end = max(
         (kf.time_s for cam in scene.cameras for kf in cam.keyframes), default=0.0
@@ -146,25 +162,27 @@ def _parse_root(root: ET.Element, units_per_meter: float) -> Scene:
     return scene
 
 
-def _parse_raw_camera(obj: ET.Element, loc, idx: int) -> dict:
+def _parse_raw_camera(
+    obj: ET.Element, loc, idx: int, camera_height_m: float = _DEFAULT_CAMERA_HEIGHT_M
+) -> dict:
     return {
         "uid": _uid(obj, f"camera_{idx}"),
-        "location": loc(obj, z=_DEFAULT_CAMERA_HEIGHT_M),
+        "location": loc(obj, z=camera_height_m),
         "yaw_deg": _yaw_deg(obj),
         # stop-mark number: 1-based order of this position within a camera move
         "stop": int(_ftext(obj, "stopMarks", 0.0)),
     }
 
 
-def _parse_track(obj: ET.Element, upm: float) -> dict:
+def _parse_track(
+    obj: ET.Element, upm: float, camera_height_m: float = _DEFAULT_CAMERA_HEIGHT_M
+) -> dict:
     """A ``<Track>`` is a dolly path linking two stop marks by uniqueID."""
     points: list[Vec3] = []
     pts = obj.find("Points")
     if pts is not None:
         for p in pts.findall("Point"):
-            points.append(
-                Vec3(_ftext(p, "x") / upm, _ftext(p, "y") / upm, _DEFAULT_CAMERA_HEIGHT_M)
-            )
+            points.append(Vec3(_ftext(p, "x") / upm, _ftext(p, "y") / upm, camera_height_m))
     return {
         "from": obj.findtext("fromConstraints") or "",
         "to": obj.findtext("toConstraints") or "",
@@ -173,7 +191,12 @@ def _parse_track(obj: ET.Element, upm: float) -> dict:
     }
 
 
-def _assemble_cameras(raw_cameras: list[dict], tracks: list[dict], camera_speed: float) -> list[Camera]:
+def _assemble_cameras(
+    raw_cameras: list[dict],
+    tracks: list[dict],
+    camera_speed: float,
+    focal_length_mm: float = _DEFAULT_FOCAL_MM,
+) -> list[Camera]:
     """Merge stop-mark cameras joined by camera tracks into moving cameras.
 
     A Shot Designer camera move is stored as N ``<Camera>`` elements (one per
@@ -228,7 +251,7 @@ def _assemble_cameras(raw_cameras: list[dict], tracks: list[dict], camera_speed:
                             time_s=0.0,
                             location=c["location"],
                             yaw_deg=c["yaw_deg"],
-                            focal_length_mm=_DEFAULT_FOCAL_MM,
+                            focal_length_mm=focal_length_mm,
                         )
                     ],
                 )
@@ -302,6 +325,14 @@ def _parse_character(obj: ET.Element, loc, idx: int) -> Actor:
     uid = _uid(obj, f"character_{idx}")
     female = (obj.findtext("female") or "false").lower() == "true"
     color = obj.findtext("colorName") or ""
+    color_rgb = None
+    raw_color = obj.findtext("color")
+    if raw_color:
+        try:
+            v = int(raw_color)  # packed 0xRRGGBB
+            color_rgb = [(v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF]
+        except ValueError:
+            pass
     name = uid if not uid.replace("-", "").isalnum() or "character" in uid.lower() else uid
     return Actor(
         id=uid,
@@ -311,6 +342,7 @@ def _parse_character(obj: ET.Element, loc, idx: int) -> Actor:
         height_m=1.65 if female else 1.8,
         color=color,
         female=female,
+        color_rgb=color_rgb,
     )
 
 

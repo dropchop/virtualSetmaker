@@ -43,9 +43,11 @@ class Actor:
     height_m: float = 1.8
     color: str = ""
     female: bool = False  # Shot Designer <female> flag (Type B characters)
+    color_rgb: Optional[list[int]] = None  # [r, g, b] 0-255 from the numeric <color>
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "Actor":
+        rgb = d.get("color_rgb")
         return Actor(
             id=d["id"],
             name=d.get("name", d["id"]),
@@ -54,6 +56,7 @@ class Actor:
             height_m=float(d.get("height_m", 1.8)),
             color=d.get("color", ""),
             female=bool(d.get("female", False)),
+            color_rgb=None if rgb is None else [int(c) for c in rgb],
         )
 
 
@@ -213,6 +216,9 @@ class Scene:
     # the source document carries (only the current snapshot is converted).
     skipped_objects: list[str] = field(default_factory=list)
     extra_snapshots: int = 0
+    # Free-form parse warnings (e.g. an untested file version) surfaced verbatim
+    # in the build report.
+    notes: list[str] = field(default_factory=list)
 
     # -- serialization -----------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
@@ -236,6 +242,7 @@ class Scene:
             shots=[Shot.from_dict(x) for x in d.get("shots", [])],
             skipped_objects=[str(x) for x in d.get("skipped_objects", [])],
             extra_snapshots=int(d.get("extra_snapshots", 0)),
+            notes=[str(x) for x in d.get("notes", [])],
         )
 
     @staticmethod

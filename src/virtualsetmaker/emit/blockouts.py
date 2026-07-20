@@ -18,6 +18,7 @@ Part frame (before the prop's own rotation is applied):
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 CUBE = "cube"
@@ -417,10 +418,8 @@ ALIASES: list[tuple[str, str]] = [
     ("PLANE", "PLANESMALL"),
     ("CAR", "CAR"),
     ("VEHICLE", "CAR"),
-    # production equipment
-    ("BOOM", "BOOM"),
+    # production equipment (BOOM and MICROPHONE match in the electronics block)
     ("CRANE", "CRANE"),
-    ("MICROPHONE", "MICROPHONE"),
     ("MIC", "MICROPHONE"),
     ("MONITORV", "MONITORVILLAGE"),
     ("EQUIPMENT", "EQUIPMENT"),
@@ -430,6 +429,63 @@ ALIASES: list[tuple[str, str]] = [
 # Fallback for anything unrecognized: an obvious placeholder cube.
 GENERIC = [_p(CUBE, (0, 0, 50), (100, 100, 100))]
 
+# ---------------------------------------------------------------------------
+# Native icon sizes (Shot Designer size calibration)
+# ---------------------------------------------------------------------------
+# Shot Designer's <objectScaleX/Y> is relative to each icon's NATIVE art size
+# in SD units (1 unit = 1 cm), which is undocumented and varies per icon. For
+# icons whose native art is larger than our real-world recipe, multiplying the
+# recipe by objectScale alone emits the prop too small. With a native span
+# recorded here, the emitted world footprint becomes objectScale * native —
+# exactly the icon's on-canvas span — regardless of recipe dimensions.
+#
+# An absent entry assumes native == recipe base span, i.e. the historical
+# behavior (verified correct for SOFA at scale 1.0 and DOOROPEN at 0.7).
+# Calibration procedure (character-yardstick) is documented in the README.
+SD_NATIVE: dict[str, tuple[float, float]] = {
+    # PROVISIONAL: from samples/one_with_table.hcw both table icons stored
+    # objectScale ~0.567; native 160 makes them ~90 cm tables. Refine from a
+    # canvas screenshot (see README) if the intended size differs.
+    "TABLESQUARE": (160.0, 160.0),
+    "TABLEROUND": (160.0, 160.0),
+}
+
+
+def native_span_for(recipe_name: Optional[str]) -> Optional[tuple[float, float]]:
+    """Native icon (x, y) span in SD units for a recipe, or None if untracked."""
+    if recipe_name is None:
+        return None
+    return SD_NATIVE.get(recipe_name)
+
+
+def recipe_span(parts: list[dict]) -> tuple[float, float]:
+    """Axis-aligned (x, y) bounding-box span of a recipe in cm.
+
+    Part rotations are honored in full (pitched car wheels, rolled tank
+    barrels): each part's extent along a world axis is the projection of its
+    oriented box, sum of |R[i][j]| * half_size[j] under the UE rotator order
+    R = Rz(yaw) * Ry(pitch) * Rx(roll).
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    for part in parts:
+        cx, cy, _cz = part["offset"]
+        half = [s / 2.0 for s in part["size"]]
+        pitch, yaw, roll = (math.radians(a) for a in part["rot"])
+        cy_, sy_ = math.cos(yaw), math.sin(yaw)
+        cp, sp = math.cos(pitch), math.sin(pitch)
+        cr, sr = math.cos(roll), math.sin(roll)
+        # Rows of Rz(yaw)·Ry(pitch)·Rx(roll) for the world X and Y axes.
+        row_x = (cy_ * cp, cy_ * sp * sr - sy_ * cr, cy_ * sp * cr + sy_ * sr)
+        row_y = (sy_ * cp, sy_ * sp * sr + cy_ * cr, sy_ * sp * cr - cy_ * sr)
+        ex = sum(abs(r) * h for r, h in zip(row_x, half))
+        ey = sum(abs(r) * h for r, h in zip(row_y, half))
+        xs += [cx - ex, cx + ex]
+        ys += [cy - ey, cy + ey]
+    if not xs:
+        return 0.0, 0.0
+    return max(xs) - min(xs), max(ys) - min(ys)
+
 
 # ---------------------------------------------------------------------------
 # Light fixture blockouts
@@ -438,28 +494,42 @@ GENERIC = [_p(CUBE, (0, 0, 50), (100, 100, 100))]
 # Unreal light attached at the fixture's emit point. ``emit`` is the offset of
 # that emit point (cm, same local frame as prop parts); ``emit: None`` means
 # the item is rigging only and no light is spawned (e.g. speed rail).
+# ``cls`` is the Unreal light class spawned there: flat sources read best as
+# rect lights, omnidirectional lanterns as points, the sun as a directional,
+# and fresnels/ellipsoidals/PARs/anything unrecognized as spotlights.
 
 _STAND_BASE = _p(CYL, (0, 0, 2), (60, 60, 4))
 _STAND_POLE = _p(CYL, (0, 0, 82), (5, 5, 160))
+# Shared rig geometry (frame on two stands; softbox head; slab head; hung ball)
+_FRAME_PARTS = [
+    _p(CYL, (-65, 0, 60), (5, 5, 120)),
+    _p(CYL, (65, 0, 60), (5, 5, 120)),
+    _p(CUBE, (0, 0, 120), (120, 6, 120)),
+]
+_SOFTBOX_PARTS = [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 12, 165), (90, 60, 90))]
+_SLAB_PARTS = [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 6, 155), (100, 10, 60))]
+_HUNG_BALL_PARTS = [_p(CYL, (0, 0, 250), (2, 2, 60)), _p(SPHERE, (0, 0, 190), (60, 60, 60))]
 
 LIGHT_FIXTURES: list[tuple[str, dict]] = [
-    # (substring of kind, fixture) — checked in order, first match wins.
-    ("SUN", {"parts": [], "emit": (0, 0, 0)}),  # sky light: no rig geo
-    ("SPEEDRAIL", {  # rigging only, no light
+    # (substring of kind, fixture) — checked in order, first match wins, so
+    # more specific substrings come first (SOFTBOX before SOFT).
+    ("SUN", {"parts": [], "emit": (0, 0, 0), "cls": "directional"}),  # sky: no rig geo
+    ("SPEEDRAIL", {  # rigging only, no light (cls unused)
         "parts": [
             _p(CYL, (-100, 0, 120), (5, 5, 240)),
             _p(CYL, (100, 0, 120), (5, 5, 240)),
             _p(CYL, (0, 0, 240), (5, 5, 210), rot=(90, 0, 0)),
         ],
         "emit": None,
+        "cls": "spot",
     }),
-    ("CHINA", {  # hanging paper ball
-        "parts": [_p(CYL, (0, 0, 250), (2, 2, 60)), _p(SPHERE, (0, 0, 190), (60, 60, 60))],
-        "emit": (0, 0, 190),
-    }),
+    ("CHINA", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
+    ("LANTERN", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
+    ("BULB", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
     ("BALLOON", {
         "parts": [_p(CYL, (0, 0, 260), (2, 2, 80)), _p(SPHERE, (0, 0, 320), (120, 120, 120))],
         "emit": (0, 0, 320),
+        "cls": "point",
     }),
     ("PRACTICAL", {  # in-scene floor lamp
         "parts": [
@@ -468,50 +538,33 @@ LIGHT_FIXTURES: list[tuple[str, dict]] = [
             _p(CYL, (0, 0, 160), (40, 40, 35)),
         ],
         "emit": (0, 0, 150),
+        "cls": "point",
     }),
-    ("STICK", {  # handheld lamp on a pole
+    ("STICK", {  # "Light On A Stick" — handheld omni lamp on a pole
         "parts": [_p(CYL, (0, 0, 90), (4, 4, 180)), _p(CUBE, (0, 0, 190), (15, 15, 15))],
         "emit": (0, 0, 190),
+        "cls": "point",
     }),
-    ("SILK", {  # frame on two stands, light on the face
-        "parts": [
-            _p(CYL, (-65, 0, 60), (5, 5, 120)),
-            _p(CYL, (65, 0, 60), (5, 5, 120)),
-            _p(CUBE, (0, 0, 120), (120, 6, 120)),
-        ],
-        "emit": (0, 10, 120),
-    }),
-    ("BOUNCE", {
-        "parts": [
-            _p(CYL, (-65, 0, 60), (5, 5, 120)),
-            _p(CYL, (65, 0, 60), (5, 5, 120)),
-            _p(CUBE, (0, 0, 120), (120, 6, 120)),
-        ],
-        "emit": (0, 10, 120),
-    }),
-    ("SOFTBOX", {
-        "parts": [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 12, 165), (90, 60, 90))],
-        "emit": (0, 45, 165),
-    }),
-    ("FLO", {  # tube banks: vertical slab head on a stand
-        "parts": [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 6, 155), (100, 10, 60))],
-        "emit": (0, 14, 155),
-    }),
-    ("PANEL", {
-        "parts": [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 6, 155), (100, 10, 60))],
-        "emit": (0, 14, 155),
-    }),
+    ("SILK", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),
+    ("BOUNCE", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),
+    ("FRAME", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),
+    ("SOFTBOX", {"parts": _SOFTBOX_PARTS, "emit": (0, 45, 165), "cls": "rect"}),
+    ("SOFT", {"parts": _SOFTBOX_PARTS, "emit": (0, 45, 165), "cls": "rect"}),
+    ("FLO", {"parts": _SLAB_PARTS, "emit": (0, 14, 155), "cls": "rect"}),
+    ("PANEL", {"parts": _SLAB_PARTS, "emit": (0, 14, 155), "cls": "rect"}),
     ("LED", {
         "parts": [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 6, 155), (35, 10, 35))],
         "emit": (0, 14, 155),
+        "cls": "rect",
     }),
 ]
 
 # Anything else (fresnels, open face, ellipsoidal, PAR, scoop, cyc, unknown):
-# a classic stand with a boxy head, light at the lens.
+# a classic stand with a boxy head, spotlight at the lens.
 LIGHT_FIXTURE_DEFAULT: dict = {
     "parts": [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 8, 170), (40, 35, 40))],
     "emit": (0, 28, 170),
+    "cls": "spot",
 }
 
 

@@ -4,11 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "virtualsetmaker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Turn Shot Designer (.hcw) scenes into Unreal Engine scenes (cameras, actors, props, walls, lights)."
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.9"
 dependencies = []  # parser + emitter use only the Python standard library
+
+[project.urls]
+Homepage = "https://github.com/dropchop/virtualSetmaker"
+Issues = "https://github.com/dropchop/virtualSetmaker/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]

@@ -20,43 +20,14 @@ import math
 
 from ..coords import ir_to_ue_location, ir_to_ue_rotation, ir_to_ue_yaw, M_TO_CM
 from ..ir import Camera, Scene
-from .blockouts import fixture_for, recipe_for
+from ..settings import Defaults
+from .blockouts import fixture_for, native_span_for, recipe_for, recipe_span
 
 WALL_HEIGHT_CM = 250.0
 WALL_THICKNESS_CM = 10.0
 LIGHT_PITCH_DEG = -25.0
 LIGHT_SUN_HEIGHT_CM = 800.0
 LIGHT_SUN_PITCH_DEG = -50.0
-
-# Shot Designer lighting palette -> Unreal light class, by substring (checked
-# in order). Fresnels/ellipsoidals/PARs and anything unrecognized read best as
-# spotlights; flat sources as rect lights; omnidirectional lanterns as points.
-_LIGHT_CLASS_RULES = [
-    ("SUN", "directional"),
-    ("SILK", "rect"),
-    ("SOFTBOX", "rect"),
-    ("SOFT", "rect"),
-    ("BOUNCE", "rect"),
-    ("PANEL", "rect"),
-    ("FLO", "rect"),
-    ("LED", "rect"),
-    ("FRAME", "rect"),
-    ("CHINABALL", "point"),
-    ("CHINA", "point"),
-    ("BALLOON", "point"),
-    ("PRACTICAL", "point"),
-    ("LANTERN", "point"),
-    ("BULB", "point"),
-    ("STICK", "point"),  # "Light On A Stick" — handheld omni lamp
-]
-
-
-def _light_class(kind: str) -> str:
-    key = (kind or "").upper()
-    for needle, cls in _LIGHT_CLASS_RULES:
-        if needle in key:
-            return cls
-    return "spot"
 
 # Skeletal meshes tried in order for actors; falls back to a capsule if none
 # load. Manny for Shot Designer Type A characters, Quinn for Type B (<female>).
@@ -78,15 +49,33 @@ MANNEQUIN_YAW_OFFSET = -90.0
 CUBE_MESH = "/Engine/BasicShapes/Cube.Cube"
 CYLINDER_MESH = "/Engine/BasicShapes/Cylinder.Cylinder"
 SPHERE_MESH = "/Engine/BasicShapes/Sphere.Sphere"
+BASIC_SHAPE_MATERIAL = "/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"
+
+# Fallback palette for hand-authored IR that carries only a colorName. Real
+# .hcw files store a packed <color> int, which always wins. Only Red and Blue
+# are evidence-backed (sample <color> values); the rest are plausible matches
+# for Shot Designer's pastel character palette.
+COLOR_NAME_RGB = {
+    "Red": (252, 131, 123),  # sample <color>16548731
+    "Blue": (148, 184, 255),  # sample <color>9746687
+    "Green": (150, 220, 150),
+    "Yellow": (250, 235, 140),
+    "Orange": (255, 190, 130),
+    "Purple": (200, 160, 255),
+    "Pink": (255, 170, 210),
+    "Gray": (185, 185, 185),
+}
 
 
-def _scene_payload(scene: Scene) -> dict:
+def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
     """Pre-convert every object into Unreal-space numbers for embedding."""
+    options = options or Defaults()
     m2cm = scene.units_per_meter  # IR meters -> UE cm (1 SD unit = 1 cm => 100)
 
     actors = []
     for a in scene.actors:
         x, y, z = ir_to_ue_location(a.location, m2cm)
+        rgb = a.color_rgb or COLOR_NAME_RGB.get(a.color)
         actors.append(
             {
                 "loc": [x, y, 0.0],
@@ -95,6 +84,8 @@ def _scene_payload(scene: Scene) -> dict:
                 "height_cm": a.height_m * 100.0,
                 "color": a.color,
                 "female": a.female,
+                # Linear 0-1 for unreal.LinearColor; null = leave untinted.
+                "rgb": None if rgb is None else [round(c / 255.0, 4) for c in rgb],
             }
         )
 
@@ -112,12 +103,23 @@ def _scene_payload(scene: Scene) -> dict:
         screen_yaw = p.yaw_deg if p.wall_snapped else p.yaw_deg + 90.0
         yaw = ir_to_ue_yaw(screen_yaw)
         matched, parts = recipe_for(p.kind)
+        # objectScale is relative to the icon's native art size, not to our
+        # recipe. When the native span is known, rescale so the emitted world
+        # footprint equals objectScale * native (the icon's on-canvas span).
+        sx, sy = p.scale.x, p.scale.y
+        native = native_span_for(matched)
+        if native is not None:
+            bx, by = recipe_span(parts)
+            if bx > 1e-6:
+                sx *= native[0] / bx
+            if by > 1e-6:
+                sy *= native[1] / by
         props.append(
             {
                 "label": p.name,
                 "kind": p.kind,
                 "matched": matched,
-                "parts": _bake_parts(parts, (x, y), yaw, (p.scale.x, p.scale.y)),
+                "parts": _bake_parts(parts, (x, y), yaw, (sx, sy)),
             }
         )
 
@@ -133,7 +135,7 @@ def _scene_payload(scene: Scene) -> dict:
                 continue
             wall_segments.append(
                 {
-                    "loc": [(ax + bx) / 2.0, (ay + by) / 2.0, WALL_HEIGHT_CM / 2.0],
+                    "loc": [(ax + bx) / 2.0, (ay + by) / 2.0, options.wall_height_cm / 2.0],
                     "yaw": math.degrees(math.atan2(by - ay, bx - ax)),
                     "length": length,
                     "label": f"Wall_{w.id[:8]}",
@@ -144,8 +146,8 @@ def _scene_payload(scene: Scene) -> dict:
     for lt in scene.lights:
         x, y, _z = ir_to_ue_location(lt.location, m2cm)
         yaw = ir_to_ue_yaw(lt.yaw_deg)
-        cls = _light_class(lt.kind)
         fixture = fixture_for(lt.kind)
+        cls = fixture["cls"]
 
         if cls == "directional":
             # The sun ignores position; park it high, steeply pitched, no rig.
@@ -194,7 +196,7 @@ def _scene_payload(scene: Scene) -> dict:
 
     return {
         "name": scene.name,
-        "fps": scene.frame_rate,
+        "fps": options.frame_rate or scene.frame_rate,
         "duration": scene.duration_s,
         "actors": actors,
         "props": props,
@@ -324,6 +326,26 @@ def _secs_to_frame(tick, t):
     return unreal.FrameNumber(int(round(t * tick.numerator / tick.denominator)))
 
 
+def _tint(actor, rgb):
+    # Color a capsule-fallback actor with the Shot Designer character color.
+    # Dynamic material instances are session-transient -- fine for a blocking
+    # aid. Fails soft: a missing material or parameter just logs a warning.
+    if rgb is None:
+        return
+    try:
+        smc = actor.get_component_by_class(unreal.StaticMeshComponent)
+        base = unreal.EditorAssetLibrary.load_asset(BASIC_SHAPE_MATERIAL)
+        if smc is None or base is None:
+            return
+        mid = smc.create_dynamic_material_instance(0, base)
+        if mid:
+            mid.set_vector_parameter_value(
+                "Color", unreal.LinearColor(float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0)
+            )
+    except Exception as exc:
+        unreal.log_warning("VSM: could not tint actor: %s" % exc)
+
+
 def build_scene():
     meshes = {
         "cube": unreal.EditorAssetLibrary.load_asset(CUBE_MESH),
@@ -368,6 +390,7 @@ def build_scene():
                 actor = _spawn_object(cylinder, loc, [0.0, a["yaw"], 0.0], what)
                 if actor is not None:
                     actor.set_actor_scale3d(unreal.Vector(0.4, 0.4, h / 100.0))
+                    _tint(actor, a["rgb"])  # mannequins keep their own materials
             else:
                 unreal.log_error("VSM: no mannequin and no cylinder mesh -- skipping " + what)
                 continue
@@ -470,7 +493,7 @@ def build_scene():
     # --- level sequence + cameras --------------------------------------
     tools = unreal.AssetToolsHelpers.get_asset_tools()
     seq = tools.create_asset(
-        "SEQ_" + SCENE["name"], "/Game/VSM", unreal.LevelSequence, unreal.LevelSequenceFactoryNew()
+        "SEQ_" + SCENE["name"], UE_CONTENT_PATH, unreal.LevelSequence, unreal.LevelSequenceFactoryNew()
     )
     seq.set_display_rate(unreal.FrameRate(int(SCENE["fps"]), 1))
     seq.set_playback_end_seconds(float(SCENE["duration"]))
@@ -493,8 +516,13 @@ def build_scene():
         spawned["cameras"] += 1
         actor.set_actor_label(cam["label"])
         comp = actor.get_cine_camera_component()
-        # Set focal length BEFORE binding: spawnables snapshot a template here.
+        # Set focal length and filmback BEFORE binding: spawnables snapshot a
+        # template here.
         comp.set_editor_property("current_focal_length", float(cam["focal0"]))
+        fb = comp.get_editor_property("filmback")
+        fb.set_editor_property("sensor_width", float(cam["sensor"][0]))
+        fb.set_editor_property("sensor_height", float(cam["sensor"][1]))
+        comp.set_editor_property("filmback", fb)
         binding = ls_sub.add_spawnable_from_instance(seq, actor)
         bindings.append(binding)
 
@@ -568,9 +596,10 @@ build_scene()
 '''
 
 
-def build_script(scene: Scene) -> str:
+def build_script(scene: Scene, options: Defaults | None = None) -> str:
     """Return the full Unreal Python script for ``scene`` as a string."""
-    payload = json.dumps(_scene_payload(scene), indent=2)
+    options = options or Defaults()
+    payload = json.dumps(_scene_payload(scene, options), indent=2)
     header = (
         "# Auto-generated by virtualSetmaker. Run INSIDE the Unreal 5.8 editor (works on 5.6+):\n"
         "#   Output Log -> switch 'Cmd' to 'Python', then:  py \"%s.py\"\n"
@@ -588,26 +617,30 @@ def build_script(scene: Scene) -> str:
         "CUBE_MESH = %r\n"
         "CYLINDER_MESH = %r\n"
         "SPHERE_MESH = %r\n"
+        "BASIC_SHAPE_MATERIAL = %r\n"
         "WALL_THICKNESS_CM = %r\n"
-        "WALL_HEIGHT_CM = %r\n\n"
+        "WALL_HEIGHT_CM = %r\n"
+        "UE_CONTENT_PATH = %r\n\n"
         # JSON is not Python source (false/true/null), so it must be parsed,
         # not pasted in as a literal.
         'SCENE = json.loads(r"""\n%s\n""")\n'
         % (
-            MANNY_CANDIDATES,
-            QUINN_CANDIDATES,
+            options.manny_paths or MANNY_CANDIDATES,
+            options.quinn_paths or QUINN_CANDIDATES,
             MANNEQUIN_YAW_OFFSET,
             CUBE_MESH,
             CYLINDER_MESH,
             SPHERE_MESH,
-            WALL_THICKNESS_CM,
-            WALL_HEIGHT_CM,
+            BASIC_SHAPE_MATERIAL,
+            options.wall_thickness_cm,
+            options.wall_height_cm,
+            options.ue_content_path,
             payload,
         )
     )
     return header + constants + _RUNTIME
 
 
-def write_script(scene: Scene, path: str) -> None:
+def write_script(scene: Scene, path: str, options: Defaults | None = None) -> None:
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(build_script(scene))
+        fh.write(build_script(scene, options))

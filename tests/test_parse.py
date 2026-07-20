@@ -23,6 +23,30 @@ def test_probe_rejects_non_shotdesigner(tmp_path):
         probe(str(bad))
 
 
+def test_probe_warns_on_untested_file_version(tmp_path):
+    doc = tmp_path / "future.hcw"
+    doc.write_text(
+        "<ShotDesignerDocument>"
+        "<DocumentPreamble>"
+        "<magic>Hollywood Camera Work Shot Designer Scene</magic>"
+        "<fileVersion>2</fileVersion><appVersion>9.9</appVersion>"
+        "</DocumentPreamble>"
+        "<CurrentSnapshot><Canvas/></CurrentSnapshot>"
+        "</ShotDesignerDocument>"
+    )
+    result = probe(str(doc))
+    assert len(result.warnings) == 1
+    assert "file version '2'" in result.warnings[0]
+    # ...and the warning rides along into the parsed scene for the build report.
+    scene = parse_file(str(doc))
+    assert scene.notes == result.warnings
+
+
+def test_probe_has_no_warnings_for_supported_version():
+    assert probe(SAMPLE).warnings == []
+    assert parse_file(SAMPLE).notes == []
+
+
 def test_parse_counts_match_sample():
     scene = parse_file(SAMPLE)
     assert len(scene.cameras) == 1
@@ -110,3 +134,11 @@ def test_character_female_flag_is_parsed():
     by_id = {a.id: a for a in scene.actors}
     assert by_id["firstcharacter"].female is False
     assert by_id["secondcharacter"].female is True
+
+
+def test_character_color_is_unpacked_to_rgb():
+    table_sample = os.path.join(os.path.dirname(SAMPLE), "one_with_table.hcw")
+    scene = parse_file(table_sample)
+    by_color = {a.color: a for a in scene.actors}
+    assert by_color["Red"].color_rgb == [252, 131, 123]  # <color>16548731
+    assert by_color["Blue"].color_rgb == [148, 184, 255]  # <color>9746687

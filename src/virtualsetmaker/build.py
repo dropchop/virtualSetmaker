@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import os
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from .emit import write_script
 from .emit.blockouts import match_kind
 from .ir import Scene
 from .parse import parse_file
+from .settings import Defaults
 
 
 @dataclass
@@ -44,7 +45,7 @@ def default_output_name(input_path: str) -> str:
 
 
 def report_for(scene: Scene, input_path: str, output_path: str) -> BuildReport:
-    warnings = scene.validate()
+    warnings = list(scene.notes) + scene.validate()
     if scene.skipped_objects:
         counts = Counter(scene.skipped_objects)
         for tag, n in sorted(counts.items()):
@@ -74,20 +75,37 @@ def report_for(scene: Scene, input_path: str, output_path: str) -> BuildReport:
     )
 
 
-def build_hcw(input_path: str, output_path: str, units_per_meter: float = 100.0) -> BuildReport:
+def build_hcw(
+    input_path: str,
+    output_path: str,
+    units_per_meter: float | None = None,
+    options: Defaults | None = None,
+) -> BuildReport:
     """Parse ``input_path`` and write the Unreal script to ``output_path``.
 
-    Raises on unreadable/invalid input (NotShotDesignerFile, OSError); callers
-    present the error. A returned report means the script was written.
+    ``options`` carries every pipeline tunable; an explicit ``units_per_meter``
+    (the historical keyword) overrides it. Raises on unreadable/invalid input
+    (NotShotDesignerFile, OSError); callers present the error. A returned
+    report means the script was written.
     """
-    scene = parse_file(input_path, units_per_meter=units_per_meter)
+    opts = options or Defaults()
+    if units_per_meter is not None:
+        opts = replace(opts, units_per_meter=float(units_per_meter))
+    scene = parse_file(
+        input_path,
+        units_per_meter=opts.units_per_meter,
+        focal_length_mm=opts.focal_length_mm,
+        camera_height_m=opts.camera_height_m,
+    )
     report = report_for(scene, input_path, output_path)
-    write_script(scene, output_path)
+    write_script(scene, output_path, opts)
     return report
 
 
-def build_scene_to(scene: Scene, input_path: str, output_path: str) -> BuildReport:
+def build_scene_to(
+    scene: Scene, input_path: str, output_path: str, options: Defaults | None = None
+) -> BuildReport:
     """Same as :func:`build_hcw` but for an already-parsed/loaded Scene (IR JSON)."""
     report = report_for(scene, input_path, output_path)
-    write_script(scene, output_path)
+    write_script(scene, output_path, options)
     return report

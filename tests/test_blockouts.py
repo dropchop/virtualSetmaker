@@ -37,6 +37,12 @@ def test_all_alias_targets_have_recipes():
         assert target in RECIPES, target
 
 
+def test_no_duplicate_alias_rows():
+    from virtualsetmaker.emit.blockouts import ALIASES
+
+    assert len(ALIASES) == len(set(ALIASES))
+
+
 # The full Shot Designer object palette (from the app's palette screenshots,
 # 2026-07). Keys are predicted in both word orders since Shot Designer condenses
 # display names unpredictably (Large Fresnel -> FRESNELLARGE, Open Door ->

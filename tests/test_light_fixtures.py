@@ -1,4 +1,4 @@
-from virtualsetmaker.emit.blockouts import LIGHT_FIXTURE_DEFAULT, fixture_for
+from virtualsetmaker.emit.blockouts import LIGHT_FIXTURE_DEFAULT, LIGHT_FIXTURES, fixture_for
 from virtualsetmaker.emit.unreal_python import _scene_payload
 from virtualsetmaker.ir import Light, Scene, Vec3
 
@@ -44,6 +44,27 @@ def test_silk_gets_frame_with_rect_light_on_face():
 
 def test_unknown_kind_falls_back_to_default_stand():
     assert fixture_for("SOMETHINGNEW") is LIGHT_FIXTURE_DEFAULT
+
+
+def test_every_fixture_declares_a_valid_light_class():
+    valid = {"spot", "rect", "point", "directional"}
+    for needle, fixture in LIGHT_FIXTURES:
+        assert fixture["cls"] in valid, needle
+    assert LIGHT_FIXTURE_DEFAULT["cls"] == "spot"
+
+
+def test_soft_and_frame_kinds_get_rect_lights_with_matching_rigs():
+    for kind in ("SOFTLIGHT", "FRAME"):
+        lt = _payload_for(kind)
+        assert lt["cls"] == "rect", kind
+        assert len(lt["parts"]) == 3, kind
+
+
+def test_lantern_and_bulb_kinds_get_hung_point_lights():
+    for kind in ("LANTERN", "LIGHTBULB"):
+        lt = _payload_for(kind)
+        assert lt["cls"] == "point", kind
+        assert lt["light_rot"][0] == 0.0, kind
 
 
 def test_emit_point_rotates_with_fixture_yaw():
