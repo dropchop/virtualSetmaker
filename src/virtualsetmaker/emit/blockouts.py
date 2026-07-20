@@ -336,6 +336,9 @@ ALIASES: list[tuple[str, str]] = [
     ("SHELF", "BOOKCASE"),
     ("SHELVES", "BOOKCASE"),
     # doors / windows (double rules before single; BED rules above catch DOUBLEBED)
+    # The app's real keys first: DOUBLEDOOROPEN would otherwise hit DOUBLEDOOR.
+    ("DOUBLEDOOROPEN", "DOORDOUBLEOPEN"),
+    ("DOUBLEDOORCLOSED", "DOORDOUBLECLOSED"),
     ("DOUBLEOPEN", "DOORDOUBLEOPEN"),
     ("OPENDOUBLE", "DOORDOUBLEOPEN"),
     ("DOORDOUBLE", "DOORDOUBLECLOSED"),
@@ -367,6 +370,7 @@ ALIASES: list[tuple[str, str]] = [
     ("PAPER", "PAPER"),
     ("PLATE", "PLATE"),
     ("CUP", "CUP"),
+    ("BOTTLE", "CUP"),  # the app's real objectKey for its Cup icon is BOTTLE
     ("SHOTGUN", "RIFLE"),
     ("RIFLE", "RIFLE"),
     ("GUN", "GUN"),
@@ -443,11 +447,43 @@ GENERIC = [_p(CUBE, (0, 0, 50), (100, 100, 100))]
 # behavior (verified correct for SOFA at scale 1.0 and DOOROPEN at 0.7).
 # Calibration procedure (character-yardstick) is documented in the README.
 SD_NATIVE: dict[str, tuple[float, float]] = {
-    # PROVISIONAL: from samples/one_with_table.hcw both table icons stored
-    # objectScale ~0.567; native 160 makes them ~90 cm tables. Refine from a
-    # canvas screenshot (see README) if the intended size differs.
-    "TABLESQUARE": (160.0, 160.0),
-    "TABLEROUND": (160.0, 160.0),
+    # MEASURED from Shot Designer 1.80.8's own vector art (the installer's
+    # FXG assets; the app places art 1 unit = 1 cm, verified in its code:
+    # GenericObject sets fxg.scaleX = objectScaleX). Values are art bbox +
+    # stroke, axes swapped into the recipe frame (recipe X = art y): anchored
+    # on the sofa (art 78.9 deep vs 79.4 measured in a real scene). Doors,
+    # windows, openings and prison bars are wall-snapped: their art includes
+    # wall stubs, and their verified behavior needs no native entry.
+    "TABLESQUARE": (219.5, 119.5),
+    "TABLEOVAL": (216.0, 119.5),
+    "TABLEROUND": (120.6, 120.6),
+    "CHAIR": (66.3, 66.3),
+    "SOFA": (154.8, 78.9),
+    "PAPER": (48.0, 64.7),
+    "CELLPHONE": (18.1, 28.6),
+    "LAPTOP": (60.0, 48.2),
+    "KEYBOARD": (97.1, 28.8),
+    "MONITOR": (73.8, 22.0),
+    "PLATE": (46.0, 46.0),
+    "CUP": (19.2, 19.2),
+    "DOG": (86.5, 83.2),
+    "GUN": (40.8, 23.9),
+    "RIFLE": (133.1, 41.3),
+    "BUSH": (152.2, 152.4),
+    "TREE": (412.0, 389.1),
+    "CAR": (205.2, 477.5),
+    "MINIBUS": (235.5, 588.6),
+    "SEMITRUCK": (395.0, 1142.2),
+    "TRUCKTRAILER": (390.0, 1323.1),
+    "MOTORCYCLE": (139.3, 327.8),
+    "TANK": (204.7, 511.7),
+    "PLANESMALL": (526.3, 438.0),
+    "FIGHTERJET": (504.3, 560.1),
+    "COMMERCIALJET": (517.9, 617.0),
+    "CRANE": (518.0, 396.9),
+    "BOOM": (54.6, 199.9),
+    "MONITORVILLAGE": (330.0, 250.1),
+    "EQUIPMENT": (323.9, 372.3),
 }
 
 
@@ -509,6 +545,12 @@ _FRAME_PARTS = [
 _SOFTBOX_PARTS = [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 12, 165), (90, 60, 90))]
 _SLAB_PARTS = [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 6, 155), (100, 10, 60))]
 _HUNG_BALL_PARTS = [_p(CYL, (0, 0, 250), (2, 2, 60)), _p(SPHERE, (0, 0, 190), (60, 60, 60))]
+# Handheld omni lamp on a pole ("Light On A Stick", objectKey HOLLYWOODLIGHT)
+_STICK_FIXTURE = {
+    "parts": [_p(CYL, (0, 0, 90), (4, 4, 180)), _p(CUBE, (0, 0, 190), (15, 15, 15))],
+    "emit": (0, 0, 190),
+    "cls": "point",
+}
 
 LIGHT_FIXTURES: list[tuple[str, dict]] = [
     # (substring of kind, fixture) — checked in order, first match wins, so
@@ -540,11 +582,9 @@ LIGHT_FIXTURES: list[tuple[str, dict]] = [
         "emit": (0, 0, 150),
         "cls": "point",
     }),
-    ("STICK", {  # "Light On A Stick" — handheld omni lamp on a pole
-        "parts": [_p(CYL, (0, 0, 90), (4, 4, 180)), _p(CUBE, (0, 0, 190), (15, 15, 15))],
-        "emit": (0, 0, 190),
-        "cls": "point",
-    }),
+    # "Light On A Stick": the app's real objectKey is HOLLYWOODLIGHT.
+    ("HOLLYWOOD", _STICK_FIXTURE),
+    ("STICK", _STICK_FIXTURE),
     ("SILK", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),
     ("BOUNCE", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),
     ("FRAME", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),

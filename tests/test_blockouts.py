@@ -37,6 +37,15 @@ def test_all_alias_targets_have_recipes():
         assert target in RECIPES, target
 
 
+def test_real_app_object_keys_resolve_correctly():
+    # objectKeys confirmed from the decompiled 1.80.8 GenericLoader.LoadAll.
+    assert match_kind("BOTTLE") == "CUP"  # the Cup icon's real key
+    assert match_kind("DOUBLEDOOROPEN") == "DOORDOUBLEOPEN"
+    assert match_kind("DOUBLEDOORCLOSED") == "DOORDOUBLECLOSED"
+    assert match_kind("BOOMMIC") == "BOOM"
+    assert match_kind("SMALLWINDOW") == "WINDOW"
+
+
 def test_no_duplicate_alias_rows():
     from virtualsetmaker.emit.blockouts import ALIASES
 

@@ -46,26 +46,31 @@ def test_recipe_span_honors_part_rotation():
     assert sy == pytest.approx(790.0)  # hull rear -340 .. barrel tip 260+190
 
 
-def test_tables_emit_at_icon_size_not_doll_house_size():
+def test_tables_emit_at_measured_icon_size():
     props = _payload_props()
-    # objectScale ~0.567 * native 160 => ~90 cm (was 51/68 cm before
-    # calibration). The tabletop is parts[0]; assert its emitted size directly
-    # (the AABB footprint would over-read the slightly-rotated square table).
-    for name, stored_scale in (("TABLESQUARE", 0.5672760691533394), ("TABLEROUND", 0.5660213270955472)):
-        top = props[name]["parts"][0]
-        expected = stored_scale * native_span_for(name)[0]
-        assert top["scale"][0] * 100.0 == pytest.approx(expected, abs=0.5), name
-        assert top["scale"][1] * 100.0 == pytest.approx(expected, abs=0.5), name
-        assert 85.0 < top["scale"][0] * 100.0 < 95.0, name
-        # ...and the whole footprint is in the right neighborhood too.
-        w, d = _footprint(props[name])
-        assert w == pytest.approx(expected, abs=2.0), name
-        assert d == pytest.approx(expected, abs=2.0), name
+    # Natives measured from the app's own FXG art. The "Square Table" icon is
+    # actually rectangular (219.5 x 119.5): stored scale ~0.567 emits a
+    # ~124.5 x 67.8 cm table. The round table icon is 120.6 across -> ~68.3.
+    sq = props["TABLESQUARE"]["parts"][0]
+    s = 0.5672760691533394
+    assert sq["scale"][0] * 100.0 == pytest.approx(s * 219.5, abs=0.5)
+    assert sq["scale"][1] * 100.0 == pytest.approx(s * 119.5, abs=0.5)
+    rd = props["TABLEROUND"]["parts"][0]
+    r = 0.5660213270955472
+    assert rd["scale"][0] * 100.0 == pytest.approx(r * 120.6, abs=0.5)
+    assert rd["scale"][1] * 100.0 == pytest.approx(r * 120.6, abs=0.5)
 
 
-def test_uncalibrated_recipes_keep_historical_sizing():
-    # No SD_NATIVE entry -> factor 1: DOOROPEN at objectScale 0.7 spans 70 cm
-    # (pinned by test_prop_placement); spot-check via the other sample here.
+def test_wall_snapped_sets_have_no_native_entry():
+    # Doors/windows are wall-snapped: their art includes wall stubs, and the
+    # opening-based behavior is verified — they must stay uncalibrated.
     assert native_span_for("DOOROPEN") is None
-    assert native_span_for("SOFA") is None
+    assert native_span_for("WINDOW") is None
     assert native_span_for(None) is None
+
+
+def test_sofa_native_matches_the_measured_scene():
+    # Sofa native comes from the app art (154.8 x 78.9) — within a stroke
+    # width of the recipe (180 was our guess for width; depth 80 vs 78.9),
+    # and of the 79.4 cm depth measured in Sceneforclaude.
+    assert native_span_for("SOFA") == (154.8, 78.9)

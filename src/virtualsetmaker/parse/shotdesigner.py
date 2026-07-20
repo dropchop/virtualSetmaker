@@ -33,7 +33,9 @@ from typing import Optional
 from ..ir import Actor, Camera, CameraKeyframe, Light, Prop, Scene, Shot, Vec3, Wall
 from .probe import NotShotDesignerFile, probe_root
 
-# Default lens by Shot Designer <cameraStyle>; refined once we see more styles.
+# Shot Designer stores NO lens data: <cameraStyle> is a display-only icon
+# style (verified against the decompiled 1.80.8 source — stored/roundtripped,
+# never branched on). The focal length is always ours to supply.
 _DEFAULT_FOCAL_MM = 35.0
 # Shot Designer is a 2D top-down tool: it carries no camera height, so default
 # cameras to eye level (meters). Overridden if a future format exposes height.

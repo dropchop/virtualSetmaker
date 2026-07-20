@@ -52,18 +52,17 @@ SPHERE_MESH = "/Engine/BasicShapes/Sphere.Sphere"
 BASIC_SHAPE_MATERIAL = "/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"
 
 # Fallback palette for hand-authored IR that carries only a colorName. Real
-# .hcw files store a packed <color> int, which always wins. Only Red and Blue
-# are evidence-backed (sample <color> values); the rest are plausible matches
-# for Shot Designer's pastel character palette.
+# .hcw files store a packed <color> int, which always wins. This is Shot
+# Designer 1.80.8's exact character palette (decompiled Document.as).
 COLOR_NAME_RGB = {
-    "Red": (252, 131, 123),  # sample <color>16548731
-    "Blue": (148, 184, 255),  # sample <color>9746687
-    "Green": (150, 220, 150),
-    "Yellow": (250, 235, 140),
-    "Orange": (255, 190, 130),
-    "Purple": (200, 160, 255),
-    "Pink": (255, 170, 210),
-    "Gray": (185, 185, 185),
+    "Red": (252, 131, 123),  # 16548731
+    "Blue": (148, 184, 255),  # 9746687
+    "Green": (118, 250, 138),  # 7797386
+    "Cyan": (124, 255, 224),  # 8191968
+    "Pink": (230, 155, 240),  # 15113200
+    "Yellow": (255, 255, 134),  # 16777094
+    "Gray": (187, 187, 187),  # 12303291
+    "Extra": (255, 255, 255),  # 16777215
 }
 
 

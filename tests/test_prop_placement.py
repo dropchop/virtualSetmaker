@@ -57,11 +57,12 @@ def test_door_is_wall_snapped_and_sofa_is_not():
 def test_sofa_backs_flush_against_the_rear_wall():
     sofa = _payload_props()["SOFA"]
     x0, x1, y0, y1 = _footprint(sofa)
-    # Back edge flush at the wall (the 0.3 cm is the scene's own placement
-    # precision), length along X, entirely inside the room.
-    assert y0 == pytest.approx(BACK_WALL_Y, abs=1.0)
-    assert x1 - x0 == pytest.approx(180.0, abs=1.0)  # arm-to-arm width
-    assert y1 - y0 == pytest.approx(80.0, abs=1.0)  # seat depth
+    # The emitted sofa now matches the app icon's measured native size
+    # (154.8 x 78.9 — what Shot Designer actually displayed), so the back
+    # edge sits within a stroke width of the wall the scene placed it against.
+    assert y0 == pytest.approx(BACK_WALL_Y, abs=1.5)
+    assert x1 - x0 == pytest.approx(154.8, abs=1.0)  # arm-to-arm width
+    assert y1 - y0 == pytest.approx(78.9, abs=1.0)  # seat depth
     assert y1 < -100.0  # nothing pokes through or beyond the wall
 
 

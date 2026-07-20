@@ -60,6 +60,13 @@ def test_soft_and_frame_kinds_get_rect_lights_with_matching_rigs():
         assert len(lt["parts"]) == 3, kind
 
 
+def test_hollywoodlight_is_the_light_on_a_stick():
+    # The app's real objectKey for "Light On A Stick" is HOLLYWOODLIGHT.
+    lt = _payload_for("HOLLYWOODLIGHT")
+    assert lt["cls"] == "point"
+    assert len(lt["parts"]) == 2  # pole + lamp head
+
+
 def test_lantern_and_bulb_kinds_get_hung_point_lights():
     for kind in ("LANTERN", "LIGHTBULB"):
         lt = _payload_for(kind)

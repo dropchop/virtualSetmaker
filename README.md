@@ -180,20 +180,16 @@ Each is a list of primitive parts built with `_p(shape, offset, size, rot)`:
 ### Icon size calibration (`SD_NATIVE`)
 
 Shot Designer's `objectScaleX/Y` is relative to each icon's **native art size**
-(undocumented, varies per icon) — not to our real-world recipes. For icons
-whose art is bigger than real furniture, `recipe × objectScale` comes out too
-small. The `SD_NATIVE` table in `blockouts.py` records native spans in SD
-units; with an entry present, the emitted footprint becomes
-**`objectScale × native`** — exactly the icon's on-canvas span. Without one,
-behavior is the historical `recipe × objectScale` (verified correct for sofas
-and doors).
-
-To calibrate an icon, use the **character icons as the yardstick** (a person's
-shoulder width ≈ 45 cm): on a Shot Designer canvas screenshot, measure the
-prop icon's span in pixels against a character icon's shoulder width, then
-`native = 45 × prop_px / char_px / objectScale`. The current table-icon value
-(160) is provisional, derived from `samples/one_with_table.hcw` assuming ~90 cm
-tables — refine it with a screenshot measurement if your tables read wrong.
+— not to our real-world recipes. The `SD_NATIVE` table in `blockouts.py` now
+carries values **measured from the app's own vector art** (the 1.80.8
+installer's FXG assets; the app places art at 1 unit = 1 cm, confirmed in its
+decompiled source), so the emitted footprint is `objectScale x native` —
+exactly what the Shot Designer canvas shows. Some icons differ from their
+names: the "Square Table" icon is really a 120x220 cm rectangular table, and a
+fresh door is placed at objectScale 0.7 by default. Doors/windows/openings are
+wall-snapped (their art includes wall stubs) and keep the verified
+opening-based sizing without a native entry. For any future icon, the same
+measurement can be redone from the installer's `FXG/` assets.
 
 ## Warnings and notes
 
@@ -229,11 +225,16 @@ plus a final spawned-vs-expected summary per category.
 
 ### 2026-07-20
 
-* **Prop size calibration** — new `SD_NATIVE` table maps Shot Designer icons'
-  native art sizes so scaled props emit at their true on-canvas span
-  (`objectScale × native`). Table icons are calibrated (provisionally to
-  ~90 cm; see *Icon size calibration*): the sample scene's tables now export
-  at ~90 cm instead of 51–68 cm. Uncalibrated icons keep the old behavior.
+* **Prop size calibration (measured)** — new `SD_NATIVE` table maps Shot
+  Designer icons' native art sizes so scaled props emit at their true
+  on-canvas span (`objectScale × native`). Values are measured from the app's
+  own vector art (installer FXG assets, 30 freestanding icons), anchored
+  against real-scene measurements. Fixes from the same decompiled source: the
+  Cup icon's real key `BOTTLE` (was a generic cube), `DOUBLEDOOROPEN` mapping
+  to the closed-door recipe, `HOLLYWOODLIGHT` (Light On A Stick) getting the
+  stand fixture instead of its stick + point light, the exact 8-color
+  character palette, and confirmation that `<cameraStyle>` carries no lens
+  data (display-only).
 * **Config file + CLI flags** — every hardcoded default is now tunable: focal
   length, camera height, wall height/thickness, frame rate, UE content path,
   and mannequin asset paths, via `vsm build` flags or a `defaults` section in
