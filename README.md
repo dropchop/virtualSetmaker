@@ -181,6 +181,15 @@ so its bounding box matches **exactly** the box the blockout would occupy —
 layout never changes, only looks. Later runs reuse the imported assets
 (delete `/Game/VSM/Meshes` to force a re-import after upgrading).
 
+**The imported meshes are deliberately left unsaved** (dirty) — save them
+with a normal **File → Save All** whenever you like. Saving from inside the
+import frame races Interchange's deferred source-data commit and writes a
+corrupt package (`StaticMeshDescriptionBulkData != nullptr` assert **that
+crashes the editor on every later load**). If a project ever gets into that
+crash loop from packages saved by an older script version: close the
+editor, delete `<project>/Content/VSM/Meshes/` in the file explorer, reopen
+and re-run — the meshes re-import cleanly.
+
 Fallbacks at every step: `vsm_props/` missing, import fails, or the importer
 rotates the up-axis (a guard compares imported bounds against authored
 extents) → that prop spawns as its blockout parts, with a log line saying

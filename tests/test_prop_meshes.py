@@ -94,6 +94,11 @@ def test_generated_script_carries_the_mesh_runtime():
     assert "unreal.AssetImportTask()" in script
     assert "import_asset_tasks([task])" in script
     assert "does_asset_exist" in script
+    # Saving inside the import frame corrupts the package (UE 5.8 crash:
+    # StaticMeshDescriptionBulkData assert on every later load) -- the task
+    # must NEVER set save, and the mesh must not be save_loaded_asset'ed.
+    assert 'set_editor_property("save"' not in script
+    assert "StaticMeshDescriptionBulkData" in script  # the docstring warning
     # Fit from the loaded asset's real bounds, never hardcoded sizes.
     assert "get_bounding_box" in script
     # Legacy Y-up assets get corrected in place, not re-imported; anything

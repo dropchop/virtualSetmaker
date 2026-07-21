@@ -631,14 +631,17 @@ def _slot_material(slot):
 
 
 def _colorize_prop_mesh(mesh):
-    """Assign the flat VSM material instances by material-slot name."""
+    """Assign the flat VSM material instances by material-slot name.
+
+    The mesh itself is intentionally NOT saved here (see
+    _load_or_import_prop_mesh: saving in the import frame corrupts the
+    package); it just stays dirty until a normal Save All."""
     try:
         for i, sm in enumerate(mesh.static_materials):
             slot = str(sm.material_slot_name)
             mi = _slot_material(slot)
             if mi is not None:
                 mesh.set_material(i, mi)
-        unreal.EditorAssetLibrary.save_loaded_asset(mesh)
     except Exception as exc:
         unreal.log_warning("VSM: could not colorize mesh: %s" % exc)
 
@@ -650,7 +653,16 @@ _MESH_MEMO = {}
 def _load_or_import_prop_mesh(model):
     """Load /Game .../Meshes/SM_VSM_<model>, importing the shipped OBJ on
     first use (synchronous AssetImportTask -> Interchange). None = caller
-    falls back to blockout parts."""
+    falls back to blockout parts.
+
+    DELIBERATELY NEVER SAVES the imported mesh packages: saving during the
+    import frame races Interchange's deferred source-data commit and writes
+    a .uasset whose StaticMeshDescriptionBulkData is null -- a package that
+    fatally asserts the editor on every later load (observed on UE 5.8).
+    Imported meshes stay in memory (dirty); saving later via File > Save
+    All is safe because the source data is committed by then. If a crash
+    loop from previously-saved corrupt packages occurs: close the editor
+    and delete <project>/Content/VSM/Meshes in the file explorer."""
     import os
 
     if model in _MESH_MEMO:
@@ -673,7 +685,7 @@ def _load_or_import_prop_mesh(model):
                 task.set_editor_property("destination_path", UE_CONTENT_PATH + "/Meshes")
                 task.set_editor_property("automated", True)
                 task.set_editor_property("replace_existing", True)
-                task.set_editor_property("save", True)
+                # NO task.save -- see the docstring.
                 unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
                 mesh = unreal.EditorAssetLibrary.load_asset(asset_path)
                 if mesh is not None:
