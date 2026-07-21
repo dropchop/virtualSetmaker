@@ -223,6 +223,29 @@ plus a final spawned-vs-expected summary per category.
 
 ## Changelog
 
+### 2026-07-20 (second drop): wall openings, set-piece yaw, mannequin search
+
+* **Doors/windows carve real wall openings** — wall inserts (`DOOR*`,
+  `OPENING`, `WINDOW` recipes) now snap flush onto the nearest parallel wall
+  segment (origin projected onto the centerline, yaw aligned to the wall while
+  keeping the swing side) and the segment's cube is split around the opening:
+  side pieces, a lintel above, and a sill below windows. Frames sit in a real
+  hole instead of clipping a solid wall. Matching is geometric (within 20 cm
+  and 15°), so hand-placed pieces work — `<snapPath>` is no longer trusted.
+* **Set-piece rotation fixed** — the angle convention now keys on the element
+  type (`<GenericSet>` art is authored width-along-X → angle-direct;
+  `<GenericProp>` furniture → angle+90), not on `<snapPath>`. Windows and
+  prison bars placed without a snap were previously twisted 90°.
+* **Prison bars calibrated** — `SD_NATIVE` gains a width-only entry
+  (155.9 SD units, from adjacent icons tiling edge-to-edge in a real scene),
+  so bar runs match their on-canvas span; rail depth stays true-to-life
+  (`None` axes in `SD_NATIVE` now mean "no correction").
+* **Mannequin lookup made robust** — when none of the candidate paths load,
+  the emitted script sweeps the Asset Registry for any `/Game` skeletal mesh
+  named `SKM_Manny`/`SKM_Quinn` (and variants), wherever the project keeps
+  them; if none exist it logs an *error* with the exact content-pack steps
+  instead of a quiet capsule fallback.
+
 ### 2026-07-20
 
 * **Prop size calibration (measured)** — new `SD_NATIVE` table maps Shot

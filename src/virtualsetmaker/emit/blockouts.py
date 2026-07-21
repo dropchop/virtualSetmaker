@@ -446,14 +446,22 @@ GENERIC = [_p(CUBE, (0, 0, 50), (100, 100, 100))]
 # An absent entry assumes native == recipe base span, i.e. the historical
 # behavior (verified correct for SOFA at scale 1.0 and DOOROPEN at 0.7).
 # Calibration procedure (character-yardstick) is documented in the README.
-SD_NATIVE: dict[str, tuple[float, float]] = {
+# A None on either axis means "leave that axis at the raw objectScale":
+# used for thin run-of-wall pieces whose depth must stay true-to-life.
+SD_NATIVE: dict[str, tuple[float | None, float | None]] = {
     # MEASURED from Shot Designer 1.80.8's own vector art (the installer's
     # FXG assets; the app places art 1 unit = 1 cm, verified in its code:
     # GenericObject sets fxg.scaleX = objectScaleX). Values are art bbox +
     # stroke, axes swapped into the recipe frame (recipe X = art y): anchored
     # on the sofa (art 78.9 deep vs 79.4 measured in a real scene). Doors,
-    # windows, openings and prison bars are wall-snapped: their art includes
-    # wall stubs, and their verified behavior needs no native entry.
+    # windows and openings are wall inserts: their art includes wall stubs,
+    # and their verified behavior needs no native entry.
+    #
+    # PRISONBARS width comes from placement evidence, not art: adjacent bar
+    # icons in a real scene tile edge-to-edge with centers 155.85 units apart,
+    # so the icon's on-canvas run is ~155.9. Depth is None: the 6 cm rails
+    # must not be squeezed by the width correction.
+    "PRISONBARS": (155.9, None),
     "TABLESQUARE": (219.5, 119.5),
     "TABLEOVAL": (216.0, 119.5),
     "TABLEROUND": (120.6, 120.6),
@@ -487,11 +495,37 @@ SD_NATIVE: dict[str, tuple[float, float]] = {
 }
 
 
-def native_span_for(recipe_name: Optional[str]) -> Optional[tuple[float, float]]:
-    """Native icon (x, y) span in SD units for a recipe, or None if untracked."""
+def native_span_for(recipe_name: Optional[str]) -> Optional[tuple[float | None, float | None]]:
+    """Native icon (x, y) span in SD units for a recipe, or None if untracked.
+
+    A None inside the tuple means that axis has no native correction (raw
+    objectScale applies).
+    """
     if recipe_name is None:
         return None
     return SD_NATIVE.get(recipe_name)
+
+
+# ---------------------------------------------------------------------------
+# Wall inserts (openings carved out of wall segments)
+# ---------------------------------------------------------------------------
+# Recipes that live *inside* a wall: the emitter snaps them onto the nearest
+# parallel wall segment and splits that segment's cube so there is a real
+# opening (with a lintel above, and a sill below windows) instead of a frame
+# clipping through a solid wall. Values are the opening's (z_bottom, z_top) in
+# cm, matching each recipe's frame: door/opening headers top out at 220
+# (header center 215, 10 thick); the window glass sits between the sill
+# (80-90) and the header (210-220). The opening's width along the wall is the
+# recipe's X span times the prop's scale. PRISONBARS is deliberately absent:
+# bars stand as their own room dividers, not inside a wall.
+WALL_OPENINGS: dict[str, tuple[float, float]] = {
+    "DOOR": (0.0, 220.0),
+    "DOOROPEN": (0.0, 220.0),
+    "DOORDOUBLECLOSED": (0.0, 220.0),
+    "DOORDOUBLEOPEN": (0.0, 220.0),
+    "OPENING": (0.0, 220.0),
+    "WINDOW": (80.0, 220.0),
+}
 
 
 def recipe_span(parts: list[dict]) -> tuple[float, float]:

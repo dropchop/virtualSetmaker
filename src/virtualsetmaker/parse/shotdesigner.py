@@ -139,7 +139,7 @@ def _parse_root(
         elif tag == "Character":
             scene.actors.append(_parse_character(obj, loc, i))
         elif tag in ("GenericProp", "GenericSet"):
-            scene.props.append(_parse_prop(obj, loc, i))
+            scene.props.append(_parse_prop(obj, loc, i, is_set=tag == "GenericSet"))
         elif tag == "Wall":
             scene.walls.append(_parse_wall(obj, upm, i))
         elif tag == "GenericLight":
@@ -348,7 +348,7 @@ def _parse_character(obj: ET.Element, loc, idx: int) -> Actor:
     )
 
 
-def _parse_prop(obj: ET.Element, loc, idx: int) -> Prop:
+def _parse_prop(obj: ET.Element, loc, idx: int, is_set: bool = False) -> Prop:
     uid = _uid(obj, f"prop_{idx}")
     kind = obj.findtext("objectKey") or ""
     sx = _ftext(obj, "objectScaleX", 1.0)
@@ -360,10 +360,14 @@ def _parse_prop(obj: ET.Element, loc, idx: int) -> Prop:
         location=loc(obj),
         yaw_deg=_yaw_deg(obj),
         scale=Vec3(sx, sy, 1.0),
-        # A non-empty <snapPath> names the wall this set piece is glued to
-        # (doors/windows). Its angle is then the wall's direction, not a user
-        # rotation — the emitter treats the two cases differently.
+        # A non-empty <snapPath> names the wall this set piece was glued to.
+        # Informational only: pieces detached and moved by hand keep stale
+        # snapPercent/snapSection values and lose snapPath, so placement never
+        # relies on these fields.
         wall_snapped=bool((obj.findtext("snapPath") or "").strip()),
+        # <GenericSet> icon art is authored width-along-X (rotation = angle);
+        # <GenericProp> furniture faces +Y (rotation = angle + 90).
+        is_set=is_set,
     )
 
 

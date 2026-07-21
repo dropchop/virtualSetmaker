@@ -21,10 +21,17 @@ import math
 from ..coords import ir_to_ue_location, ir_to_ue_rotation, ir_to_ue_yaw, M_TO_CM
 from ..ir import Camera, Scene
 from ..settings import Defaults
-from .blockouts import fixture_for, native_span_for, recipe_for, recipe_span
+from .blockouts import WALL_OPENINGS, fixture_for, native_span_for, recipe_for, recipe_span
 
 WALL_HEIGHT_CM = 250.0
 WALL_THICKNESS_CM = 10.0
+# Wall-insert snapping (doors/windows/openings onto the nearest wall segment):
+# a piece counts as "in" a wall when its origin is within this distance of a
+# segment's centerline and its yaw is parallel to the segment within this
+# angle. Generous enough for hand-placed pieces (the test scene's window sits
+# 1.35 cm off its wall), tight enough not to grab furniture near a wall.
+WALL_SNAP_DIST_CM = 20.0
+WALL_SNAP_ANGLE_DEG = 15.0
 LIGHT_PITCH_DEG = -25.0
 LIGHT_SUN_HEIGHT_CM = 800.0
 LIGHT_SUN_PITCH_DEG = -50.0
@@ -43,6 +50,11 @@ QUINN_CANDIDATES = [
     "/Game/Characters/Mannequins/Meshes/SKM_Quinn.SKM_Quinn",
     "/Game/ThirdPerson/Characters/Mannequins/Meshes/SKM_Quinn.SKM_Quinn",
 ]
+# When none of the candidate paths load, the emitted script falls back to an
+# Asset Registry sweep for any /Game skeletal mesh with one of these names
+# (preference order) -- projects keep the mannequins under arbitrary folders.
+MANNY_NAMES = ["SKM_Manny", "SKM_Manny_Simple", "SK_Mannequin"]
+QUINN_NAMES = ["SKM_Quinn", "SKM_Quinn_Simple"]
 # UE mannequin meshes are authored facing +Y: a raw SkeletalMeshActor at yaw 0
 # looks down +Y, so facing direction phi needs a spawn yaw of phi - 90.
 MANNEQUIN_YAW_OFFSET = -90.0
@@ -88,31 +100,71 @@ def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
             }
         )
 
+    # Wall centerlines come first: wall inserts (doors/windows/openings) snap
+    # onto them and record the openings to carve, so the segments must exist
+    # before props are baked. Cubes are emitted from these after the prop pass.
+    raw_segments = []
+    for w in scene.walls:
+        pts = [ir_to_ue_location(pt, m2cm) for pt in w.points]
+        pairs = list(zip(pts, pts[1:]))
+        if w.closed_loop and len(pts) > 2:
+            pairs.append((pts[-1], pts[0]))
+        for (ax, ay, _az), (bx, by, _bz) in pairs:
+            length = math.hypot(bx - ax, by - ay)
+            if length < 1e-3:
+                continue
+            raw_segments.append(
+                {
+                    "a": (ax, ay),
+                    "b": (bx, by),
+                    "yaw": math.degrees(math.atan2(by - ay, bx - ax)),
+                    "length": length,
+                    "label": f"Wall_{w.id[:8]}",
+                    "openings": [],  # (t0, t1, z0, z1) cuts along the segment
+                }
+            )
+
     props = []
     for p in scene.props:
         x, y, _z = ir_to_ue_location(p.location, m2cm)
         # Prop angle semantics, calibrated against a real scene (a sofa placed
         # flush against a wall + a door snapped into one):
-        # * freestanding props (RotatorObject): the stored angle points at the
-        #   prop's BACK — the recipe front (+Y local) faces angle+180, so the
-        #   recipe frame's screen rotation is angle+90;
-        # * wall-snapped sets (doors/windows, <snapPath> set): the angle is the
-        #   wall segment's direction and the recipe width (local X) lies along
-        #   it — screen rotation is the angle itself.
-        screen_yaw = p.yaw_deg if p.wall_snapped else p.yaw_deg + 90.0
+        # * freestanding props (<GenericProp>, RotatorObject): the stored angle
+        #   points at the prop's BACK — the recipe front (+Y local) faces
+        #   angle+180, so the recipe frame's screen rotation is angle+90;
+        # * set pieces (<GenericSet>, RotatorNoMenu: doors/windows/bars): the
+        #   icon art is authored width-along-X and the angle is the direct
+        #   screen rotation. (Not keyed on <snapPath> — pieces placed by hand
+        #   never get one, and detached pieces keep stale snap fields.)
+        screen_yaw = p.yaw_deg if p.is_set else p.yaw_deg + 90.0
         yaw = ir_to_ue_yaw(screen_yaw)
         matched, parts = recipe_for(p.kind)
         # objectScale is relative to the icon's native art size, not to our
         # recipe. When the native span is known, rescale so the emitted world
         # footprint equals objectScale * native (the icon's on-canvas span).
+        # A None axis keeps the raw objectScale (true-to-life depths).
         sx, sy = p.scale.x, p.scale.y
         native = native_span_for(matched)
         if native is not None:
             bx, by = recipe_span(parts)
-            if bx > 1e-6:
+            if native[0] is not None and bx > 1e-6:
                 sx *= native[0] / bx
-            if by > 1e-6:
+            if native[1] is not None and by > 1e-6:
                 sy *= native[1] / by
+        # Wall inserts: snap flush onto the nearest parallel wall segment and
+        # carve the opening out of it, so frames sit in a real hole instead of
+        # clipping a solid wall at whatever angle the piece was dropped at.
+        opening = WALL_OPENINGS.get(matched or "")
+        if opening is not None:
+            hit = _nearest_wall_segment(raw_segments, x, y, yaw)
+            if hit is not None:
+                seg, t = hit
+                sax, say = seg["a"]
+                ux, uy = _segment_dir(seg)
+                x, y = sax + ux * t, say + uy * t
+                yaw = _closest_parallel_yaw(seg["yaw"], yaw)
+                half_w = recipe_span(parts)[0] * sx / 2.0
+                seg["openings"].append((t - half_w, t + half_w, opening[0], opening[1]))
         props.append(
             {
                 "label": p.name,
@@ -123,23 +175,8 @@ def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
         )
 
     wall_segments = []
-    for w in scene.walls:
-        pts = [ir_to_ue_location(pt, m2cm) for pt in w.points]
-        pairs = list(zip(pts, pts[1:]))
-        if w.closed_loop and len(pts) > 2:
-            pairs.append((pts[-1], pts[0]))
-        for (ax, ay, _az), (bx, by, _bz) in pairs:
-            length = math.hypot(bx - ax, by - ay)
-            if length < 1e-3:
-                continue
-            wall_segments.append(
-                {
-                    "loc": [(ax + bx) / 2.0, (ay + by) / 2.0, options.wall_height_cm / 2.0],
-                    "yaw": math.degrees(math.atan2(by - ay, bx - ax)),
-                    "length": length,
-                    "label": f"Wall_{w.id[:8]}",
-                }
-            )
+    for seg in raw_segments:
+        wall_segments.extend(_segment_pieces(seg, options.wall_height_cm))
 
     lights = []
     for lt in scene.lights:
@@ -204,6 +241,106 @@ def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
         "cameras": cameras,
         "shots": shots,
     }
+
+
+def _segment_dir(seg: dict) -> tuple[float, float]:
+    """Unit direction vector of a raw wall segment."""
+    (ax, ay), (bx, by) = seg["a"], seg["b"]
+    length = seg["length"]
+    return (bx - ax) / length, (by - ay) / length
+
+
+def _nearest_wall_segment(segments: list[dict], x: float, y: float, yaw_deg: float):
+    """Find the wall segment a wall insert sits in: ``(segment, t)`` or None.
+
+    ``t`` is the distance along the segment (from its start) of the insert's
+    projection. A segment qualifies when the point projects within it, lies
+    within ``WALL_SNAP_DIST_CM`` of the centerline, and the insert's yaw is
+    parallel to the segment within ``WALL_SNAP_ANGLE_DEG``; the closest
+    qualifying centerline wins.
+    """
+    best = None
+    best_d = WALL_SNAP_DIST_CM
+    for seg in segments:
+        ax, ay = seg["a"]
+        ux, uy = _segment_dir(seg)
+        t = (x - ax) * ux + (y - ay) * uy
+        if t < 0.0 or t > seg["length"]:
+            continue
+        d = abs((y - ay) * ux - (x - ax) * uy)
+        if d > best_d:
+            continue
+        delta = abs(yaw_deg - seg["yaw"]) % 180.0
+        if min(delta, 180.0 - delta) > WALL_SNAP_ANGLE_DEG:
+            continue
+        best, best_d = (seg, t), d
+    return best
+
+
+def _closest_parallel_yaw(seg_yaw: float, yaw_deg: float) -> float:
+    """Yaw exactly parallel to the segment, on the side the insert already
+    faces (so a door's swing direction survives the alignment)."""
+    d = (seg_yaw - yaw_deg + 180.0) % 360.0 - 180.0
+    if abs(d) <= 90.0:
+        return yaw_deg + d
+    return yaw_deg + d - math.copysign(180.0, d)
+
+
+def _segment_pieces(seg: dict, wall_height_cm: float) -> list[dict]:
+    """Split one wall segment into spawnable cubes around its openings.
+
+    No openings -> one full cube (the historical behavior). Each opening
+    removes a (t0, t1) x (z0, z1) rectangle from the segment's elevation:
+    full-height pieces remain between openings, a lintel above each opening,
+    and a sill below (windows). Slivers under 1 cm are dropped.
+    """
+    length = seg["length"]
+    (ax, ay), _ = seg["a"], seg["b"]
+    ux, uy = _segment_dir(seg)
+    pieces: list[dict] = []
+
+    def emit(t0: float, t1: float, z0: float, z1: float) -> None:
+        if t1 - t0 < 1.0 or z1 - z0 < 1.0:
+            return
+        tm = (t0 + t1) / 2.0
+        pieces.append(
+            {
+                "loc": [ax + ux * tm, ay + uy * tm, (z0 + z1) / 2.0],
+                "yaw": seg["yaw"],
+                "length": t1 - t0,
+                "height": z1 - z0,
+                "label": seg["label"],
+            }
+        )
+
+    # Clamp cuts to the segment, then merge overlaps into one cut covering
+    # the union footprint and the union z-range (openings rarely overlap, but
+    # a double door dropped over a window must not emit overlapping cubes).
+    cuts: list[list[float]] = []
+    for t0, t1, z0, z1 in sorted(seg["openings"]):
+        t0, t1 = max(0.0, t0), min(length, t1)
+        if t1 <= t0:
+            continue
+        if cuts and t0 <= cuts[-1][1]:
+            last = cuts[-1]
+            last[1] = max(last[1], t1)
+            last[2] = min(last[2], z0)
+            last[3] = max(last[3], z1)
+        else:
+            cuts.append([t0, t1, z0, z1])
+
+    cursor = 0.0
+    for t0, t1, z0, z1 in cuts:
+        emit(cursor, t0, 0.0, wall_height_cm)
+        emit(t0, t1, 0.0, z0)  # sill below a window opening
+        emit(t0, t1, z1, wall_height_cm)  # lintel above the opening
+        cursor = t1
+    emit(cursor, length, 0.0, wall_height_cm)
+
+    if len(pieces) > 1:
+        for i, piece in enumerate(pieces):
+            piece["label"] = f"{piece['label']}_{i}"
+    return pieces
 
 
 def _bake_parts(
@@ -293,6 +430,41 @@ def _load_first(paths):
     return None
 
 
+def _find_mannequin(candidates, names):
+    """Load a mannequin mesh: explicit paths first, then an Asset Registry
+    sweep for any /Game skeletal mesh with a known name (preference order) --
+    projects keep the Third Person pack under arbitrary folders."""
+    asset = _load_first(candidates)
+    if asset is not None:
+        return asset
+    try:
+        registry = unreal.AssetRegistryHelpers.get_asset_registry()
+        arf = unreal.ARFilter()
+        arf.set_editor_property(
+            "class_paths", [unreal.TopLevelAssetPath("/Script/Engine", "SkeletalMesh")]
+        )
+        arf.set_editor_property("package_paths", ["/Game"])
+        arf.set_editor_property("recursive_paths", True)
+        arf.set_editor_property("recursive_classes", True)
+        by_name = {}
+        for data in registry.get_assets(arf):
+            name = str(data.asset_name)
+            if name in names and name not in by_name:
+                by_name[name] = data
+        for name in names:
+            if name in by_name:
+                asset = unreal.AssetRegistryHelpers.get_asset(by_name[name])
+                if asset is not None:
+                    unreal.log(
+                        "VSM: using mannequin %s (found via Asset Registry)"
+                        % by_name[name].package_name
+                    )
+                    return asset
+    except Exception as exc:
+        unreal.log_warning("VSM: Asset Registry mannequin search failed: %s" % exc)
+    return None
+
+
 _actor_sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
 # Names of objects whose spawn failed, so the end-of-run summary can list them.
@@ -353,14 +525,15 @@ def build_scene():
     }
     cube = meshes["cube"]
     cylinder = meshes["cylinder"]
-    manny = _load_first(MANNY_CANDIDATES)
-    quinn = _load_first(QUINN_CANDIDATES) or manny
+    manny = _find_mannequin(MANNY_CANDIDATES, MANNY_NAMES)
+    quinn = _find_mannequin(QUINN_CANDIDATES, QUINN_NAMES) or manny
     if manny is None:
-        unreal.log_warning(
-            "VSM: no UE Mannequin found in this project -- actors will spawn as "
-            "capsule placeholders. To get Mannys: Content Drawer -> +Add -> "
+        unreal.log_error(
+            "VSM: no UE Mannequin skeletal mesh found ANYWHERE in this project "
+            "(searched %s) -- actors will spawn as capsule placeholders. "
+            "To get Mannys/Quinns: Content Drawer -> +Add -> "
             "'Add Feature or Content Pack...' -> Third Person -> Add to Project, "
-            "then run this script again."
+            "then run this script again." % ", ".join(MANNY_NAMES)
         )
     for shape, mesh in meshes.items():
         if mesh is None:
@@ -438,7 +611,7 @@ def build_scene():
                     continue
                 spawned["walls"] += 1
                 actor.set_actor_scale3d(
-                    unreal.Vector(w["length"] / 100.0, WALL_THICKNESS_CM / 100.0, WALL_HEIGHT_CM / 100.0)
+                    unreal.Vector(w["length"] / 100.0, WALL_THICKNESS_CM / 100.0, w["height"] / 100.0)
                 )
                 actor.set_actor_label(w["label"])
                 actor.set_folder_path("VSM/Set")
@@ -612,6 +785,8 @@ def build_script(scene: Scene, options: Defaults | None = None) -> str:
     constants = (
         "MANNY_CANDIDATES = %r\n"
         "QUINN_CANDIDATES = %r\n"
+        "MANNY_NAMES = %r\n"
+        "QUINN_NAMES = %r\n"
         "MANNEQUIN_YAW_OFFSET = %r\n"
         "CUBE_MESH = %r\n"
         "CYLINDER_MESH = %r\n"
@@ -626,6 +801,8 @@ def build_script(scene: Scene, options: Defaults | None = None) -> str:
         % (
             options.manny_paths or MANNY_CANDIDATES,
             options.quinn_paths or QUINN_CANDIDATES,
+            MANNY_NAMES,
+            QUINN_NAMES,
             MANNEQUIN_YAW_OFFSET,
             CUBE_MESH,
             CYLINDER_MESH,

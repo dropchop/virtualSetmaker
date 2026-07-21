@@ -64,10 +64,15 @@ class Actor:
 class Prop:
     """A set piece / furniture item (``<GenericProp>`` or ``<GenericSet>``).
 
-    ``wall_snapped`` marks objects Shot Designer glued to a wall (doors,
-    windows: ``<snapPath>`` names the wall). Their ``yaw_deg`` is the wall
-    segment's direction, not a user rotation, and the emitter orients them
-    width-along-the-wall instead of using the freestanding-prop convention.
+    ``is_set`` marks ``<GenericSet>`` elements (doors, windows, prison bars,
+    stairs...). Their icon art is authored width-along-X, so their ``yaw_deg``
+    is the direct screen rotation; ``<GenericProp>`` furniture icons face +Y
+    and use the freestanding angle+90 convention in the emitter.
+
+    ``wall_snapped`` records a non-empty ``<snapPath>`` (Shot Designer glued
+    the piece to a wall). It is informational only: real files carry stale
+    snap fields after a piece is detached and moved, so the emitter aligns
+    wall inserts to walls geometrically instead of trusting it.
     """
 
     id: str
@@ -78,6 +83,7 @@ class Prop:
     scale: Vec3 = field(default_factory=lambda: Vec3(1.0, 1.0, 1.0))
     color: str = ""
     wall_snapped: bool = False
+    is_set: bool = False
 
     @staticmethod
     def from_dict(d: dict[str, Any]) -> "Prop":
@@ -90,6 +96,7 @@ class Prop:
             scale=Vec3.from_dict(d.get("scale", {"x": 1, "y": 1, "z": 1})),
             color=d.get("color", ""),
             wall_snapped=bool(d.get("wall_snapped", False)),
+            is_set=bool(d.get("is_set", False)),
         )
 
 
