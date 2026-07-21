@@ -682,6 +682,14 @@ def _secs_to_frame(tick, t):
     return unreal.FrameNumber(int(round(t * tick.numerator / tick.denominator)))
 
 
+def _key(chan, frame, value):
+    # _secs_to_frame gives frames in the sequence's TICK resolution, but
+    # add_key defaults time_unit to DISPLAY_RATE -- so without this an animated
+    # key at t=2s (tick frame ~48000) is read as ~48000 display frames and lands
+    # ~1600s away, off the section, and the move silently vanishes. Say TICK.
+    chan.add_key(frame, value, time_unit=unreal.SequenceTimeUnit.TICK_RESOLUTION)
+
+
 def _tint(actor, rgb):
     # Color a capsule-fallback actor with the Shot Designer character color.
     # Dynamic material instances are session-transient -- fine for a blocking
@@ -921,12 +929,12 @@ def build_scene():
         for kf in cam["keys"]:
             f = _secs_to_frame(tick, kf["t"])
             loc, rot = kf["loc"], kf["rot"]  # rot = [pitch, yaw, roll]
-            chans[0].add_key(f, loc[0])
-            chans[1].add_key(f, loc[1])
-            chans[2].add_key(f, loc[2])
-            chans[3].add_key(f, rot[2])  # roll
-            chans[4].add_key(f, rot[0])  # pitch
-            chans[5].add_key(f, rot[1])  # yaw
+            _key(chans[0], f, loc[0])
+            _key(chans[1], f, loc[1])
+            _key(chans[2], f, loc[2])
+            _key(chans[3], f, rot[2])  # roll
+            _key(chans[4], f, rot[0])  # pitch
+            _key(chans[5], f, rot[1])  # yaw
 
         if cam["focal_animated"]:
             comp_binding = seq.add_possessable(comp)
@@ -938,7 +946,7 @@ def build_scene():
             fsection.set_end_frame_seconds(cam["keys"][-1]["t"])
             fchan = fsection.get_all_channels()[0]
             for kf in cam["keys"]:
-                fchan.add_key(_secs_to_frame(tick, kf["t"]), float(kf["focal"]))
+                _key(fchan, _secs_to_frame(tick, kf["t"]), float(kf["focal"]))
 
     # --- camera cut track ----------------------------------------------
     if any(b is not None for b in bindings):
