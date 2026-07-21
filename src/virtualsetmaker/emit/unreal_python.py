@@ -36,10 +36,13 @@ LIGHT_PITCH_DEG = -25.0
 LIGHT_SUN_HEIGHT_CM = 800.0
 LIGHT_SUN_PITCH_DEG = -50.0
 
-# Skeletal meshes tried in order for actors; falls back to a capsule if none
-# load. Manny for Shot Designer Type A characters, Quinn for Type B (<female>).
-# These live in project content (the Third Person template pack), not engine
-# content -- the emitted script tells the user how to add the pack if missing.
+# Skeletal meshes tried in order for actors. Manny for Shot Designer Type A
+# characters, Quinn for Type B (<female>). These live in project content (the
+# Third Person template pack), not engine content -- projects made from other
+# templates (e.g. Film/Video "virtual production") ship no skeletal meshes at
+# all. When nothing is found, the emitted script copies the mannequin assets
+# from the engine install's Templates/ folder into the project and rescans;
+# only if that also fails do actors fall back to tinted cylinders.
 MANNY_CANDIDATES = [
     "/Game/Characters/Mannequins/Meshes/SKM_Manny.SKM_Manny",
     "/Game/ThirdPerson/Characters/Mannequins/Meshes/SKM_Manny.SKM_Manny",
@@ -465,6 +468,63 @@ def _find_mannequin(candidates, names):
     return None
 
 
+def _install_mannequin_pack():
+    """Copy the UE mannequins from the engine's Third Person template into
+    this project. Projects made from the Film/Video ("virtual production") or
+    Blank templates ship no skeletal meshes at all, but every engine install
+    carries the mannequin assets on disk under <install root>/Templates/.
+    Never overwrites existing files. Returns True when the assets are in
+    place and the Asset Registry has been rescanned (so a retry can load them)."""
+    import os
+    import shutil
+
+    try:
+        root = unreal.Paths.convert_relative_path_to_full(unreal.Paths.root_dir())
+        templates = os.path.join(root, "Templates")
+        marker = os.path.join("Mannequins", "Meshes", "SKM_Manny.uasset")
+        src = None
+        if os.path.isdir(templates):
+            for tpl in sorted(os.listdir(templates)):
+                cand = os.path.join(templates, tpl, "Content", "Characters")
+                if os.path.isfile(os.path.join(cand, marker)):
+                    src = cand
+                    break
+        if src is None:
+            unreal.log_warning(
+                "VSM: no mannequin content found under %s -- cannot auto-install "
+                "Mannys (source-built engine without templates?)" % templates
+            )
+            return False
+        dest = os.path.join(
+            unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_content_dir()),
+            "Characters",
+        )
+        copied = 0
+        for dirpath, dirnames, filenames in os.walk(src):
+            # Animations and control rigs aren't needed to pose a static
+            # blocking mannequin; leave them out to keep the project lean.
+            dirnames[:] = [
+                d for d in dirnames if d.lower() not in ("animations", "anims", "rigs")
+            ]
+            out = os.path.join(dest, os.path.relpath(dirpath, src))
+            os.makedirs(out, exist_ok=True)
+            for fn in filenames:
+                target = os.path.join(out, fn)
+                if not os.path.exists(target):
+                    shutil.copy2(os.path.join(dirpath, fn), target)
+                    copied += 1
+        unreal.log(
+            "VSM: no mannequins in this project -- installed the UE mannequins "
+            "into /Game/Characters (%d files copied from %s)" % (copied, src)
+        )
+        registry = unreal.AssetRegistryHelpers.get_asset_registry()
+        registry.scan_paths_synchronous(["/Game/Characters"], force_rescan=True)
+        return True
+    except Exception as exc:
+        unreal.log_warning("VSM: mannequin auto-install failed: %s" % exc)
+        return False
+
+
 _actor_sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
 # Names of objects whose spawn failed, so the end-of-run summary can list them.
@@ -526,11 +586,14 @@ def build_scene():
     cube = meshes["cube"]
     cylinder = meshes["cylinder"]
     manny = _find_mannequin(MANNY_CANDIDATES, MANNY_NAMES)
+    if manny is None and _install_mannequin_pack():
+        manny = _find_mannequin(MANNY_CANDIDATES, MANNY_NAMES)
     quinn = _find_mannequin(QUINN_CANDIDATES, QUINN_NAMES) or manny
     if manny is None:
         unreal.log_error(
             "VSM: no UE Mannequin skeletal mesh found ANYWHERE in this project "
-            "(searched %s) -- actors will spawn as capsule placeholders. "
+            "(searched %s) and auto-install from the engine templates failed -- "
+            "actors will spawn as cylinder placeholders. "
             "To get Mannys/Quinns: Content Drawer -> +Add -> "
             "'Add Feature or Content Pack...' -> Third Person -> Add to Project, "
             "then run this script again." % ", ".join(MANNY_NAMES)

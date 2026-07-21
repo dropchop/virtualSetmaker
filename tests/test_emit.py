@@ -164,3 +164,16 @@ def test_actors_carry_the_female_flag_for_manny_vs_quinn():
     assert 'quinn if a["female"] else manny' in script
     # And the missing-content case tells the user how to add the pack.
     assert "Add Feature or Content Pack" in script
+
+
+def test_runtime_auto_installs_mannequins_from_engine_templates():
+    script = build_script(_example_scene())
+    # Projects without any skeletal mesh (Film/Video "virtual production",
+    # Blank) get the mannequins copied in from the engine install's Templates/
+    # folder, then the search reruns. Copy must never overwrite project files.
+    assert "def _install_mannequin_pack" in script
+    assert "unreal.Paths.root_dir()" in script
+    assert 'os.path.join(root, "Templates")' in script
+    assert "if manny is None and _install_mannequin_pack():" in script
+    assert "scan_paths_synchronous" in script
+    assert "if not os.path.exists(target):" in script
