@@ -687,7 +687,9 @@ def _key(chan, frame, value):
     # add_key defaults time_unit to DISPLAY_RATE -- so without this an animated
     # key at t=2s (tick frame ~48000) is read as ~48000 display frames and lands
     # ~1600s away, off the section, and the move silently vanishes. Say TICK.
-    chan.add_key(frame, value, time_unit=unreal.SequenceTimeUnit.TICK_RESOLUTION)
+    # NOTE: MovieSceneTimeUnit is the UE 5.4+ name of this enum; the pre-5.4
+    # Sequence* name was removed entirely, so do not "fix" it back.
+    chan.add_key(frame, value, time_unit=unreal.MovieSceneTimeUnit.TICK_RESOLUTION)
 
 
 def _tint(actor, rgb):
