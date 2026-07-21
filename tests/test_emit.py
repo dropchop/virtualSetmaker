@@ -69,6 +69,18 @@ def test_animated_camera_emits_focal_length_track():
     assert "CurrentFocalLength" in script
 
 
+def test_camera_keys_use_tick_resolution_time_unit():
+    # _secs_to_frame yields TICK-resolution frames, but add_key defaults its
+    # time_unit to DISPLAY_RATE. Without an explicit TICK_RESOLUTION the second
+    # key of a moving camera lands hundreds of frames past the section and the
+    # move never plays -- so every channel add_key must go through _key().
+    script = build_script(_example_scene())
+    assert "SequenceTimeUnit.TICK_RESOLUTION" in script
+    # No channel may call add_key without the explicit tick-resolution unit.
+    assert "chans[0].add_key(" not in script
+    assert "fchan.add_key(" not in script
+
+
 def test_embedded_scene_payload_matches_ir_counts():
     scene = _example_scene()
     script = build_script(scene)
