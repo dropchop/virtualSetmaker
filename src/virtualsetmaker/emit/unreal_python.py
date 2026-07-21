@@ -437,13 +437,15 @@ def _find_mannequin(candidates, names):
             return asset
     try:
         registry = unreal.AssetRegistryHelpers.get_asset_registry()
-        arf = unreal.ARFilter()
-        arf.set_editor_property(
-            "class_paths", [unreal.TopLevelAssetPath("/Script/Engine", "SkeletalMesh")]
+        # UE 5.8: ClassPaths is not editor-settable on an ARFilter instance
+        # (set_editor_property raises "cannot be edited on instances"). Pass it
+        # to the constructor instead.
+        arf = unreal.ARFilter(
+            class_paths=[unreal.TopLevelAssetPath("/Script/Engine", "SkeletalMesh")],
+            package_paths=["/Game"],
+            recursive_paths=True,
+            recursive_classes=True,
         )
-        arf.set_editor_property("package_paths", ["/Game"])
-        arf.set_editor_property("recursive_paths", True)
-        arf.set_editor_property("recursive_classes", True)
         by_name = {}
         for data in registry.get_assets(arf):
             name = str(data.asset_name)
@@ -806,7 +808,12 @@ def build_scene():
             cs = cut.add_section()
             cs.set_start_frame_seconds(shot["start"])
             cs.set_end_frame_seconds(shot["end"])
-            cs.set_camera_binding_id(bindings[shot["cam"]].get_binding_id())
+            # UE 5.8: MovieSceneBindingProxy no longer exposes get_binding_id();
+            # build the binding ID via the sequence helper instead.
+            binding_id = unreal.MovieSceneSequenceExtensions.make_binding_id(
+                seq, bindings[shot["cam"]]
+            )
+            cs.set_camera_binding_id(binding_id)
 
     unreal.EditorAssetLibrary.save_loaded_asset(seq)
     unreal.log(
