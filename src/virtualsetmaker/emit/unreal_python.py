@@ -1013,7 +1013,20 @@ def build_scene():
         binding = ls_sub.add_spawnable_from_instance(seq, actor)
         bindings.append(binding)
 
-        track = binding.add_track(unreal.MovieScene3DTransformTrack)
+        # add_spawnable_from_instance runs through the open Sequencer, which
+        # honors the editor's "default tracks" preference and may auto-create
+        # a transform track holding the spawn pose. Adding a SECOND transform
+        # track makes Sequencer blend the two absolute transforms -- a moving
+        # camera then travels half the intended distance and ends between its
+        # keyed pose and the spawn pose. Reuse the existing track (wiping its
+        # sections) so exactly one transform track drives the camera.
+        existing = binding.find_tracks_by_exact_type(unreal.MovieScene3DTransformTrack)
+        if existing:
+            track = existing[0]
+            for stale in list(track.get_sections()):
+                track.remove_section(stale)
+        else:
+            track = binding.add_track(unreal.MovieScene3DTransformTrack)
         section = track.add_section()
         section.set_start_frame_seconds(cam["keys"][0]["t"])
         section.set_end_frame_seconds(max(cam["keys"][-1]["t"], float(SCENE["duration"])))

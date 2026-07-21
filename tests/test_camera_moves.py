@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from virtualsetmaker.parse import parse_file
+from virtualsetmaker.parse import parse_file, parse_string
 
 HERE = os.path.dirname(__file__)
 STRAIGHT = os.path.join(HERE, "..", "samples", "Camera_move_only.hcw")
@@ -65,3 +65,46 @@ def test_scene_duration_covers_the_move():
     scene = parse_file(STRAIGHT)
     assert scene.duration_s >= scene.cameras[0].keyframes[-1].time_s
     assert scene.validate() == []
+
+
+def _two_stop_move_hcw(angle_a: float, angle_b: float) -> str:
+    """Minimal scene: two stop-mark cameras joined by a straight track."""
+    return f"""<ShotDesignerDocument><CurrentSnapshot><Canvas>
+      <Camera><uniqueID>CAM-A</uniqueID><x>-75.85</x><y>150.05</y>
+        <stopMarks>1</stopMarks>
+        <SubObjects><RotatorCamera><angle>{angle_a}</angle></RotatorCamera></SubObjects>
+      </Camera>
+      <Camera><uniqueID>CAM-B</uniqueID><x>82.55</x><y>153.4</y>
+        <stopMarks>2</stopMarks>
+        <SubObjects><RotatorCamera><angle>{angle_b}</angle></RotatorCamera></SubObjects>
+      </Camera>
+      <Track><uniqueID>TRK</uniqueID>
+        <fromConstraints>CAM-A</fromConstraints><toConstraints>CAM-B</toConstraints>
+        <Points><Point><x>-75.85</x><y>150.05</y></Point>
+                <Point><x>82.55</x><y>153.4</y></Point></Points>
+      </Track>
+    </Canvas><TimeSlices><TimeNumber><cameraSpeed>3</cameraSpeed></TimeNumber>
+    </TimeSlices></CurrentSnapshot></ShotDesignerDocument>"""
+
+
+def test_stop_yaws_unwrap_to_the_shortest_turn():
+    # Shot Designer stores absolute angles: start -90deg, end 228.75deg is a
+    # -41.25deg turn -- but interpolating the raw numbers (as both Unreal's
+    # channels and our mid-point fill do) spins +318.75deg the long way.
+    # The end key must be rewritten to the nearest equivalent angle.
+    scene = parse_string(_two_stop_move_hcw(-1.5707963267948966, 3.992419209211025))
+    (cam,) = scene.cameras
+    assert cam.is_animated and len(cam.keyframes) == 2
+    y0, y1 = (k.yaw_deg for k in cam.keyframes)
+    assert y0 == pytest.approx(-90.0)
+    assert y1 == pytest.approx(-131.25, abs=0.01)  # 228.75 - 360
+    assert abs(y1 - y0) <= 180.0
+    # Same facing as the stored angle, just unwrapped.
+    assert (y1 - math.degrees(3.992419209211025)) % 360.0 == pytest.approx(0.0, abs=0.01)
+
+
+def test_stop_yaws_already_close_are_untouched():
+    scene = parse_string(_two_stop_move_hcw(0.5, 0.75))
+    y0, y1 = (k.yaw_deg for k in scene.cameras[0].keyframes)
+    assert y0 == pytest.approx(math.degrees(0.5))
+    assert y1 == pytest.approx(math.degrees(0.75))
