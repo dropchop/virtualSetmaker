@@ -42,9 +42,11 @@ def test_generated_script_uses_modern_unreal_api():
     # Rotators must be built with keywords: the Python ctor order is
     # (roll, pitch, yaw), not C++'s (pitch, yaw, roll).
     assert "unreal.Rotator(roll=" in script
-    # UE 5.8: MovieSceneBindingProxy dropped get_binding_id(); the camera-cut
-    # binding ID must come from the sequence helper instead.
+    # UE 5.7 dropped the proxy method (binding.get_binding_id()) and 5.8
+    # dropped make_binding_id: the camera-cut binding ID must come from the
+    # probed sequence helper, never the proxy method.
     assert ".get_binding_id()" not in script
+    assert 'hasattr(mse, "get_binding_id")' in script
     # UE 5.8: ARFilter.ClassPaths is not editor-settable on an instance; it
     # must be passed to the constructor, not via set_editor_property.
     assert 'set_editor_property("class_paths"' not in script
@@ -56,7 +58,7 @@ def test_generated_script_uses_modern_unreal_api():
         "MovieSceneCameraCutTrack",
         "get_cine_camera_component",
         "set_camera_binding_id",
-        "MovieSceneSequenceExtensions.make_binding_id(",
+        "mse = unreal.MovieSceneSequenceExtensions",
         "unreal.ARFilter(",
         "current_focal_length",
     ):

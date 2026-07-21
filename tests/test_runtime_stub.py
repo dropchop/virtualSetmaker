@@ -77,17 +77,17 @@ class _Actor:
         return lambda *a, **k: None
 
 
-def _obj_bbox_zup(obj_path):
-    """Bbox of an OBJ file mapped back to UE Z-up (the importer's mirror)."""
+def _obj_bbox(obj_path):
+    """Bbox of an OBJ file, verbatim — exactly what UE 5.8's Interchange OBJ
+    translator does (measured on a live editor: no axis conversion)."""
     xs, ys, zs = [], [], []
     with open(obj_path, encoding="utf-8") as fh:
         for line in fh:
             if line.startswith("v "):
                 _, x, y, z = line.split()[:4]
-                # OBJ (x, y, z) came from author (x, z, y): swap back.
                 xs.append(float(x))
-                ys.append(float(z))
-                zs.append(float(y))
+                ys.append(float(y))
+                zs.append(float(z))
     return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
 
 
@@ -122,7 +122,7 @@ def _build_stub(project_content, spawns, logs, imports):
                 src = t.props.get("filename")
                 if not (src and os.path.isfile(src)):
                     continue
-                lo, hi = _obj_bbox_zup(src)
+                lo, hi = _obj_bbox(src)
                 stem = os.path.splitext(os.path.basename(src))[0]
                 dest = t.props["destination_path"] + "/" + stem
                 f = _uasset_file(dest)
@@ -306,23 +306,32 @@ def test_missing_props_folder_falls_back_to_blockout(tmp_path):
     assert any("prop model file missing" in m for k, m in logs if k == "warn")
 
 
-def test_axis_rotated_import_is_caught_by_the_guard(tmp_path):
+def test_legacy_y_up_assets_are_auto_corrected(tmp_path):
+    # Assets imported from the old Y-up OBJ files sit in the project with
+    # authored Y/Z swapped. The runtime must NOT re-import or fall back: it
+    # spawns them with the roll-90 + mirrored-Z correction.
     out, payload, project = _setup(tmp_path)
-    _exec_script(out, project)  # first run imports for real
-    # Corrupt every imported asset the way a wrong up-axis importer would:
-    # swap the Y and Z extents.
+    _exec_script(out, project)  # first run imports (verbatim, current files)
     meshes_dir = os.path.join(project, "VSM", "Meshes")
     for fn in os.listdir(meshes_dir):
         f = os.path.join(meshes_dir, fn)
         data = json.load(open(f))
         swap = lambda v: [v[0], v[2], v[1]]
         json.dump({"lo": swap(data["lo"]), "hi": swap(data["hi"])}, open(f, "w"))
-    spawns, logs, _imports = _exec_script(out, project)
+    spawns, logs, imports = _exec_script(out, project)
+    assert not imports  # corrected in place, never re-imported
     prop = _meshed_prop(payload)
-    # TABLEROUND's authored Y and Z extents differ (120.6 vs 76), so the swap
-    # must trip the guard: no mesh spawn, blockout fallback, loud error.
-    assert not [a for a in spawns if isinstance(a.source, _Mesh)
-                and a.source.path.endswith("SM_VSM_TABLEROUND")
-                and a.label and a.label.startswith("Prop_")]
-    assert any(a.label == "Prop_" + prop["label"] for a in spawns)
-    assert any("axis-rotated" in m for k, m in logs if k == "error")
+    m = prop["mesh"]
+    # TABLEROUND's authored Y and Z extents differ (~68 vs 76 scaled), so the
+    # swap is detectable and the corrective spawn must fire.
+    actor = next(a for a in spawns if isinstance(a.source, _Mesh)
+                 and a.source.path.endswith("SM_VSM_TABLEROUND")
+                 and a.label == "Prop_" + prop["label"])
+    assert actor.rot.roll == pytest.approx(90.0)
+    assert actor.scale.z < 0  # the mirror half of the correction
+    # Fit factors land on the right axes: world X/Z scale from author X/Y.
+    f = [m["size"][i] / m["src_ext"][i] for i in range(3)]
+    assert actor.scale.x == pytest.approx(f[0], rel=1e-3)
+    assert actor.scale.y == pytest.approx(f[2], rel=1e-3)
+    assert actor.scale.z == pytest.approx(-f[1], rel=1e-3)
+    assert any("legacy Y-up import" in msg for k, msg in logs if k == "log")

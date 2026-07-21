@@ -1,17 +1,21 @@
 """OBJ/MTL export for the shipped prop models.
 
-Axis contract (the load-bearing decision): models are authored Z-up in the
-recipe frame; the writer emits the **de facto standard Y-up right-handed
-OBJ** (what a Blender default export produces) by mapping every vertex
-``(x, y, z) -> (x, z, y)``. That map is a reflection, so each face's vertex
-order is reversed to keep OBJ faces CCW-front-facing. UE's importer applies
-its usual mirror on import, landing the model back in the recipe frame:
-Z-up, 1 unit = 1 cm, front at +Y — mesh yaw offset is always zero.
+Axis contract (measured, not assumed): **UE 5.8's Interchange OBJ
+translator imports coordinates verbatim** — no Y-up conversion, no mirror.
+(Observed 2026-07-21 on a live 5.8 editor: a conventional Y-up export
+arrived with the authored Y/Z swapped, tripping the runtime axis guard on
+every mesh.) So the writer emits the recipe frame **as-is**: Z-up,
+1 unit = 1 cm, front at +Y — what lands in UE is exactly what was
+authored, and the mesh yaw offset is always zero. DCC apps that assume
+Y-up OBJ will show these models pitched; UE is the consumer that matters.
 
-Flat per-face normals are emitted (faceted previz look, no importer
-smoothing surprises) plus dominant-axis planar UVs (silences UE's
-missing-UV warnings and feeds lightmap UV generation). Faces are grouped
-into ``usemtl`` runs so each material becomes one UE material slot.
+Because the translator's winding convention is equally undocumented, every
+triangle is emitted **double-sided** (both windings, opposite normals):
+coincident opposite-facing pairs never z-fight — exactly one of the pair
+is front-facing from any viewpoint — and props can never import
+inside-out. Flat per-face normals (faceted previz look) plus dominant-axis
+planar UVs (silences UE's missing-UV warnings). Faces are grouped into
+``usemtl`` runs so each material becomes one UE material slot.
 """
 
 from __future__ import annotations
@@ -25,15 +29,9 @@ from .mesh import Mesh
 MTL_FILENAME = "vsm_props.mtl"
 
 
-def _obj_vert(v):
-    x, y, z = v
-    return (x, z, y)  # recipe Z-up -> OBJ Y-up (reflection)
-
-
 def write_obj(mesh: Mesh, path: str, object_name: str, mtllib: str = MTL_FILENAME) -> None:
-    verts = [_obj_vert(v) for v in mesh.verts]
-    # Reflection flips orientation: reverse each face to stay CCW-outward.
-    faces = [(a, c, b) for (a, b, c) in mesh.faces]
+    verts = list(mesh.verts)  # verbatim: UE 5.8 Interchange applies no conversion
+    faces = list(mesh.faces)
 
     # Group faces by material, keeping a stable order.
     by_mat: dict[str, list[int]] = {}
@@ -67,6 +65,8 @@ def write_obj(mesh: Mesh, path: str, object_name: str, mtllib: str = MTL_FILENAM
             n = (n[0] / ln, n[1] / ln, n[2] / ln)
             normals.append(n)
             ni = len(normals)
+            normals.append((-n[0], -n[1], -n[2]))
+            ni_back = len(normals)
             # dominant-axis planar projection, 1 cm = 0.01 UV
             ax = max(range(3), key=lambda i: abs(n[i]))
             uv_axes = [i for i in range(3) if i != ax]
@@ -74,12 +74,21 @@ def write_obj(mesh: Mesh, path: str, object_name: str, mtllib: str = MTL_FILENAM
             for v in (va, vb, vc):
                 uvs.append((v[uv_axes[0]] * 0.01, v[uv_axes[1]] * 0.01))
                 corner_uv_ids.append(len(uvs))
+            # Front winding, then the same triangle reversed (double-sided).
             chunk.append(
                 "f %d/%d/%d %d/%d/%d %d/%d/%d"
                 % (
                     a + 1, corner_uv_ids[0], ni,
                     b + 1, corner_uv_ids[1], ni,
                     c + 1, corner_uv_ids[2], ni,
+                )
+            )
+            chunk.append(
+                "f %d/%d/%d %d/%d/%d %d/%d/%d"
+                % (
+                    a + 1, corner_uv_ids[0], ni_back,
+                    c + 1, corner_uv_ids[2], ni_back,
+                    b + 1, corner_uv_ids[1], ni_back,
                 )
             )
         face_lines.append((mat, chunk))

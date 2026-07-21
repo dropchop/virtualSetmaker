@@ -609,11 +609,19 @@ def _slot_material(slot):
     if base is None:
         return None
     factory = unreal.MaterialInstanceConstantFactoryNew()
-    factory.set_editor_property("initial_parent", base)
+    parented = False
+    try:
+        # Removed in UE 5.8; harmless where it still exists (5.6/5.7).
+        factory.set_editor_property("initial_parent", base)
+        parented = True
+    except Exception:
+        pass
     mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
         "MI_VSM_" + slot, folder, unreal.MaterialInstanceConstant, factory
     )
     if mi is not None:
+        if not parented:
+            unreal.MaterialEditingLibrary.set_material_instance_parent(mi, base)
         unreal.MaterialEditingLibrary.set_material_instance_vector_parameter_value(
             mi, "Color", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1.0)
         )
@@ -686,10 +694,14 @@ def _spawn_prop_mesh(m, what):
     """Spawn a shipped prop mesh fitted to the blockout's exact box.
 
     Scale comes from the loaded asset's own bounding box; the bbox center
-    goes to m["loc"] XY and the bbox bottom to m["loc"][2]. An axis-swap
-    guard compares the loaded bounds against the authored extents so an
-    importer up-axis surprise falls back loudly instead of spawning a
-    lying-down prop squashed into an upright box."""
+    goes to m["loc"] XY and the bbox bottom to m["loc"][2].
+
+    The loaded bounds are compared against the authored extents to detect
+    how the importer treated the file's axes. UE 5.8's Interchange imports
+    OBJ verbatim (matches how current files are written); assets imported
+    from the older Y-up files arrive with authored Y/Z swapped and are
+    AUTO-CORRECTED here with a roll-90 + mirrored-Z spawn, so re-importing
+    is never required. Only bounds matching neither pattern fall back."""
     import math as _math
 
     mesh = _load_or_import_prop_mesh(m["model"])
@@ -697,37 +709,53 @@ def _spawn_prop_mesh(m, what):
         return None
     try:
         box = mesh.get_bounding_box()
-        ext = (box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z)
+        lo = (box.min.x, box.min.y, box.min.z)
+        hi = (box.max.x, box.max.y, box.max.z)
+        ext = tuple(hi[i] - lo[i] for i in range(3))
         if min(ext) < 0.05:
             return None
-        src = m.get("src_ext")
-        if src:
-            def _rel(a, b):
-                return abs(a - b) / max(b, 1e-3)
+        src = m["src_ext"]
 
-            direct = max(_rel(ext[i], src[i]) for i in range(3))
+        def _rel(a, b):
+            return abs(a - b) / max(b, 1e-3)
+
+        direct = max(_rel(ext[i], src[i]) for i in range(3))
+        swapped = max(_rel(ext[0], src[0]), _rel(ext[1], src[2]), _rel(ext[2], src[1]))
+        # Fit factors per AUTHOR axis (positive; signs live in the spawn).
+        f = [m["size"][i] / max(src[i], 1e-3) for i in range(3)]
+        if direct <= 0.05 or direct <= swapped:
             if direct > 0.05:
-                swapped = max(_rel(ext[0], src[0]), _rel(ext[1], src[2]), _rel(ext[2], src[1]))
-                if swapped <= 0.05:
-                    unreal.log_error(
-                        "VSM: imported mesh %s came in axis-rotated (importer up-axis "
-                        "mismatch) -- using blockout for %s" % (m["model"], what)
-                    )
-                    return None
                 unreal.log_warning(
                     "VSM: mesh %s bounds differ %.0f%% from authored -- fitting anyway"
                     % (m["model"], direct * 100.0)
                 )
-        sx, sy, sz = (m["size"][i] / ext[i] for i in range(3))
-        cx = (box.max.x + box.min.x) / 2.0 * sx
-        cy = (box.max.y + box.min.y) / 2.0 * sy
-        bz = box.min.z * sz
+            # Loaded local axes == author axes.
+            pre_lo = (f[0] * lo[0], f[1] * lo[1], f[2] * lo[2])
+            pre_hi = (f[0] * hi[0], f[1] * hi[1], f[2] * hi[2])
+            rot = [0.0, m["yaw"], 0.0]
+            scale = (f[0], f[1], f[2])
+        else:
+            # Legacy Y-up file imported verbatim: authored Y/Z arrive
+            # swapped. Rz(yaw)*Rx(90)*diag(fx, fz, -fy) maps the loaded
+            # local (x, z_a, y_a) back onto the author frame exactly.
+            unreal.log(
+                "VSM: mesh %s is a legacy Y-up import -- spawning with axis "
+                "correction (delete %s/Meshes to re-import cleanly)"
+                % (m["model"], UE_CONTENT_PATH)
+            )
+            pre_lo = (f[0] * lo[0], f[1] * lo[2], f[2] * lo[1])
+            pre_hi = (f[0] * hi[0], f[1] * hi[2], f[2] * hi[1])
+            rot = [0.0, m["yaw"], 90.0]
+            scale = (f[0], f[2], -f[1])
+        cx = (pre_lo[0] + pre_hi[0]) / 2.0
+        cy = (pre_lo[1] + pre_hi[1]) / 2.0
+        bz = min(pre_lo[2], pre_hi[2])
         rad = _math.radians(m["yaw"])
         wx = m["loc"][0] - (cx * _math.cos(rad) - cy * _math.sin(rad))
         wy = m["loc"][1] - (cx * _math.sin(rad) + cy * _math.cos(rad))
-        actor = _spawn_object(mesh, [wx, wy, m["loc"][2] - bz], [0.0, m["yaw"], 0.0], what)
+        actor = _spawn_object(mesh, [wx, wy, m["loc"][2] - bz], rot, what)
         if actor is not None:
-            actor.set_actor_scale3d(unreal.Vector(sx, sy, sz))
+            actor.set_actor_scale3d(unreal.Vector(scale[0], scale[1], scale[2]))
         return actor
     except Exception as exc:
         unreal.log_warning("VSM: mesh fit failed for %s (%s) -- using blockout" % (what, exc))
@@ -1063,11 +1091,15 @@ def build_scene():
             cs = cut.add_section()
             cs.set_start_frame_seconds(shot["start"])
             cs.set_end_frame_seconds(shot["end"])
-            # UE 5.8: MovieSceneBindingProxy no longer exposes get_binding_id();
-            # build the binding ID via the sequence helper instead.
-            binding_id = unreal.MovieSceneSequenceExtensions.make_binding_id(
-                seq, bindings[shot["cam"]]
-            )
+            # Binding-ID API moved twice: 5.7 dropped the binding proxy's
+            # own method, 5.8 dropped make_binding_id (whose deprecation
+            # notice says to migrate to the get_binding_id helper). Probe
+            # so one script runs on 5.6-5.8.
+            mse = unreal.MovieSceneSequenceExtensions
+            if hasattr(mse, "get_binding_id"):
+                binding_id = mse.get_binding_id(seq, bindings[shot["cam"]])
+            else:
+                binding_id = mse.make_binding_id(seq, bindings[shot["cam"]])
             cs.set_camera_binding_id(binding_id)
 
     unreal.EditorAssetLibrary.save_loaded_asset(seq)

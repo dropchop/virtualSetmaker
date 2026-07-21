@@ -46,22 +46,36 @@ def _signed_volume(verts, faces):
     return total / 6.0
 
 
-def test_axis_contract_z_up_becomes_y_up(tmp_path):
-    # Authored box is 10 x 20 x 30 (X, Y, Z). In the OBJ it must appear as
-    # 10 x 30 x 20 (X, Z, Y) -- the de facto Blender-style Y-up export.
+def test_axis_contract_is_verbatim_z_up(tmp_path):
+    # UE 5.8's Interchange OBJ translator imports coordinates verbatim
+    # (measured on a live editor), so the file must carry the authored
+    # recipe frame unchanged: a 10 x 20 x 30 box stays 10 x 20 x 30.
     m = box((10, 20, 30), mat="wood")
     p = str(tmp_path / "SM_VSM_TEST.obj")
     write_obj(m, p, object_name="VSM_TEST")
     verts, normals, uvs, faces, _mtls = _parse_obj(p)
     lo = [min(v[i] for v in verts) for i in range(3)]
     hi = [max(v[i] for v in verts) for i in range(3)]
-    assert [h - l for h, l in zip(hi, lo)] == pytest.approx([10.0, 30.0, 20.0])
-    # The reflection must have re-reversed winding: still outward (positive
-    # signed volume) in the OBJ's right-handed frame.
-    assert _signed_volume(verts, faces) > 0
-    # Every face carries a normal and per-corner UVs.
+    assert [h - l for h, l in zip(hi, lo)] == pytest.approx([10.0, 20.0, 30.0])
     assert normals and uvs
     assert all(len(corners) == 3 for corners, _ in faces)
+
+
+def test_faces_are_double_sided(tmp_path):
+    # The translator's winding convention is undocumented, so every triangle
+    # ships in both windings (opposite normals): props can't import
+    # inside-out, and coincident opposite pairs never z-fight (exactly one
+    # is front-facing from any viewpoint).
+    m = box((10, 20, 30), mat="wood")
+    p = str(tmp_path / "SM_VSM_DS.obj")
+    write_obj(m, p, object_name="VSM_DS")
+    verts, _n, _uv, faces, _mtls = _parse_obj(p)
+    assert len(faces) == 2 * m.tri_count()
+    # Opposite windings cancel: net signed volume ~0, and the front copies
+    # (even indices: writer emits front, then its reversed twin) are outward.
+    assert abs(_signed_volume(verts, faces)) < 1e-6 * 6000
+    fronts = [f for i, f in enumerate(faces) if i % 2 == 0]
+    assert _signed_volume(verts, fronts) == pytest.approx(6000.0)
 
 
 def test_faces_grouped_by_material_and_mtl_has_all_colors(tmp_path):
@@ -83,15 +97,15 @@ def test_faces_grouped_by_material_and_mtl_has_all_colors(tmp_path):
         assert "Kd %.4f %.4f %.4f" % (r, g, b) in text
 
 
-def test_asymmetric_model_round_trips_through_the_importer_mirror(tmp_path):
-    # A shape asymmetric in Y (a "backrest" at -Y): write it out, then apply
-    # the importer's Y-up->Z-up mirror (swap y/z back) and check the backrest
-    # is still at -Y. This is the CHAIR-faces-the-right-way contract.
+def test_asymmetric_model_lands_in_ue_unchanged(tmp_path):
+    # A shape asymmetric in Y (a "backrest" at -Y): under the verbatim
+    # importer, what's in the file IS what UE reconstructs — the backrest
+    # must already sit at -Y in the file. This is the CHAIR-faces-the-right-
+    # way contract.
     m = prism([(-40, 0), (-30, 90), (-40, 90)], "x", -20, 20, mat="wood")
     p = str(tmp_path / "SM_VSM_BACK.obj")
     write_obj(m, p, object_name="VSM_BACK")
     verts, _n, _uv, faces, _mtls = _parse_obj(p)
-    back = [(x, z, y) for (x, y, z) in verts]  # what UE reconstructs
-    assert min(v[1] for v in back) == pytest.approx(-40.0)
-    assert max(v[1] for v in back) == pytest.approx(-30.0)
-    assert max(v[2] for v in back) == pytest.approx(90.0)
+    assert min(v[1] for v in verts) == pytest.approx(-40.0)
+    assert max(v[1] for v in verts) == pytest.approx(-30.0)
+    assert max(v[2] for v in verts) == pytest.approx(90.0)

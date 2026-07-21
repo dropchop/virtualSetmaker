@@ -96,8 +96,9 @@ def test_generated_script_carries_the_mesh_runtime():
     assert "does_asset_exist" in script
     # Fit from the loaded asset's real bounds, never hardcoded sizes.
     assert "get_bounding_box" in script
-    # Axis-swap guard and the blockout fallback messaging.
-    assert "axis-rotated" in script
+    # Legacy Y-up assets get corrected in place, not re-imported; anything
+    # unrecognizable still falls back to blockout parts.
+    assert "legacy Y-up import" in script
     assert "using blockout" in script
     # The Starter Content era is over.
     assert "_install_starter_props" not in script
