@@ -84,6 +84,18 @@ def test_camera_keys_use_tick_resolution_time_unit():
     assert "fchan.add_key(" not in script
 
 
+def test_camera_reuses_auto_created_transform_track():
+    # add_spawnable_from_instance goes through the open Sequencer, which may
+    # auto-create a transform track per the editor's default-tracks setting.
+    # Keying a second transform track makes Sequencer blend the two absolute
+    # transforms: a moving camera travels half the distance and ends between
+    # its keyed pose and the spawn pose. The runtime must reuse the existing
+    # track (wiping its sections) rather than always adding a fresh one.
+    script = build_script(_example_scene())
+    assert "find_tracks_by_exact_type(unreal.MovieScene3DTransformTrack)" in script
+    assert "track.remove_section(" in script
+
+
 def test_embedded_scene_payload_matches_ir_counts():
     scene = _example_scene()
     script = build_script(scene)

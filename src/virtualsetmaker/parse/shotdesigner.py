@@ -282,6 +282,7 @@ def _assemble_cameras(
             yaws.append(b["yaw_deg"])
 
         times = _times_by_arc_length(positions, speed_mps)
+        _unwrap_stop_yaws(yaws)
         _fill_interpolated_yaws(yaws, times)
 
         keyframes = [
@@ -306,6 +307,23 @@ def _times_by_arc_length(positions: list[Vec3], speed_mps: float) -> list[float]
     if total <= 0:
         return [round(i * duration / max(len(positions) - 1, 1), 4) for i in range(len(positions))]
     return [round(d / total * duration, 4) for d in dists]
+
+
+def _unwrap_stop_yaws(yaws: list) -> None:
+    """Rewrite each stop-mark yaw to the equivalent angle nearest the previous
+    stop's yaw (same facing, mod 360). Shot Designer stores absolute angles,
+    so a start of -90 and an end of 228.75 describe a -41.25 degree turn --
+    but downstream both Unreal's channel interpolation and our intermediate-
+    point fill interpolate raw numbers, which would spin the camera +318.75
+    the long way around. Unwrapping at the source fixes both consumers."""
+    prev = None
+    for i, y in enumerate(yaws):
+        if y is None:
+            continue  # intermediate track point, filled in later
+        if prev is not None:
+            delta = (y - prev + 180.0) % 360.0 - 180.0
+            yaws[i] = prev + delta
+        prev = yaws[i]
 
 
 def _fill_interpolated_yaws(yaws: list, times: list[float]) -> None:
