@@ -13,6 +13,8 @@ from dataclasses import dataclass, field, replace
 
 from .emit import write_script
 from .emit.blockouts import match_kind
+from .geo import build_model, write_mtl, write_obj
+from .geo.props import model_names_for_scene
 from .ir import Scene
 from .parse import parse_file
 from .settings import Defaults
@@ -28,6 +30,7 @@ class BuildReport:
     lights: int = 0
     cameras: int = 0
     shots: int = 0
+    prop_models: int = 0  # shipped OBJ models written to vsm_props/
     warnings: list[str] = field(default_factory=list)
     unmatched_kinds: list[str] = field(default_factory=list)
 
@@ -35,7 +38,29 @@ class BuildReport:
         return (
             f"{self.actors} actors, {self.props} props, {self.walls} walls, "
             f"{self.lights} lights, {self.cameras} cameras, {self.shots} shots"
+            + (f", {self.prop_models} prop models" if self.prop_models else "")
         )
+
+
+def _write_prop_models(scene: Scene, output_path: str) -> int:
+    """Write the scene's shipped prop meshes to ``vsm_props/`` beside the
+    generated script (deterministic output — always overwritten). Returns
+    the number of model files written."""
+    names = model_names_for_scene(
+        (p.kind for p in scene.props), (lt.kind for lt in scene.lights)
+    )
+    if not names:
+        return 0
+    props_dir = os.path.join(os.path.dirname(os.path.abspath(output_path)), "vsm_props")
+    os.makedirs(props_dir, exist_ok=True)
+    write_mtl(os.path.join(props_dir, "vsm_props.mtl"))
+    for name in names:
+        write_obj(
+            build_model(name),
+            os.path.join(props_dir, f"SM_VSM_{name}.obj"),
+            object_name=f"VSM_{name}",
+        )
+    return len(names)
 
 
 def default_output_name(input_path: str) -> str:
@@ -99,6 +124,8 @@ def build_hcw(
     )
     report = report_for(scene, input_path, output_path)
     write_script(scene, output_path, opts)
+    if opts.use_prop_meshes:
+        report.prop_models = _write_prop_models(scene, output_path)
     return report
 
 
@@ -108,4 +135,6 @@ def build_scene_to(
     """Same as :func:`build_hcw` but for an already-parsed/loaded Scene (IR JSON)."""
     report = report_for(scene, input_path, output_path)
     write_script(scene, output_path, options)
+    if (options or Defaults()).use_prop_meshes:
+        report.prop_models = _write_prop_models(scene, output_path)
     return report

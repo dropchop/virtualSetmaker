@@ -162,28 +162,30 @@ on the right shape. Unmatched kinds fall back to a labeled 1 m cube and
 added in a few lines. Parts spawn grouped (attached to the first part) in the
 `VSM/Props` outliner folder, so each prop moves as one unit.
 
-### Real prop meshes (UE Starter Content)
+### Shipped prop meshes (`vsm_props/`)
 
-Recipes with a matching **Starter Content** static mesh (chair, armchair,
-sofa, round/oval tables, bookcase, bush — see `MESH_SPECS` in
-`emit/blockouts.py`) spawn the real mesh instead of the blockout: the runtime
-loads the asset, reads its actual bounding box, and scales it so footprint
-**and** height match exactly what the blockout would have occupied — layout
-never changes, only looks. Set `use_starter_meshes` to `false` in the config's
-`defaults` section to stay all-blockout.
+Every recipe (and every light-rig type) has a real low-poly 3D model,
+**authored procedurally by virtualSetmaker itself** (`geo/` package) — no
+Starter Content, no downloads, no plugins. `vsm build` writes the models a
+scene needs as OBJ files into a **`vsm_props/` folder next to the generated
+script** (plus one shared `.mtl`). Keep that folder beside the script when
+you copy it to the UE machine.
 
-Where the meshes come from, per engine version:
+On first run the script imports each model into
+`/Game/VSM/Meshes/SM_VSM_<NAME>` (synchronous `AssetImportTask`, which
+routes OBJ through Interchange in UE 5.1+), assigns flat previz colors as
+`MI_VSM_<material>` instances under `/Game/VSM/Materials` (wood, porcelain,
+foliage, metal... parented to the engine's BasicShapeMaterial, so colors are
+deterministic even where the importer ignores `.mtl`), and spawns it scaled
+so its bounding box matches **exactly** the box the blockout would occupy —
+layout never changes, only looks. Later runs reuse the imported assets
+(delete `/Game/VSM/Meshes` to force a re-import after upgrading).
 
-* **UE 5.6 and earlier** — the engine install ships the pack on disk under
-  `<UE root>/Samples/StarterContent/`; the script auto-copies the `Props`,
-  `Materials`, and `Textures` trees into the project's
-  `Content/StarterContent/` (never overwriting) and rescans the Asset
-  Registry, same as the mannequin auto-install.
-* **UE 5.7 / 5.8 prebuilt installs ship no Starter Content on disk.** The
-  script logs this and falls back to blockouts. To get the meshes: Content
-  Drawer → **+Add** → **Add Feature or Content Pack…** → **Starter Content**
-  → Add to Project, then re-run the script (or copy a 5.6 install's
-  `Samples/` folder into the 5.8 install).
+Fallbacks at every step: `vsm_props/` missing, import fails, or the importer
+rotates the up-axis (a guard compares imported bounds against authored
+extents) → that prop spawns as its blockout parts, with a log line saying
+why. Set `use_prop_meshes` to `false` in the config's `defaults` section to
+stay all-blockout.
 
 Wall inserts (doors/windows/openings) deliberately stay blockouts: their
 recipe spans are the verified wall-carve widths.
@@ -248,6 +250,28 @@ plus a final spawned-vs-expected summary per category.
   Verified against straight-line and curved-move samples in `samples/`.
 
 ## Changelog
+
+### 2026-07-21 (v0.4.0): shipped prop geometry — no Starter Content needed
+
+* **virtualSetmaker now ships its own 3D models.** UE 5.7+/5.8 prebuilt
+  installs carry no Starter Content anywhere, so v0.3.0's mesh path was dead
+  on arrival there. Replaced outright: a pure-stdlib procedural mesh kit
+  (`geo/`: chamfered boxes, lathes, convex prisms, spheres, tori, tubes)
+  authors a low-poly model for **all 62 recipes and all 10 light-rig types**
+  — lathed toilet bowl and pedestal sink, car with a real side-profile body
+  and rubber wheels, lobed trees/bushes, tapered aircraft fuselages, book
+  rows in the bookcase, burners on the stove, pillows on the beds — each
+  bbox-contracted to its blockout within a twentieth of a millimeter so
+  every calibration (SD_NATIVE, frozen carve spans) is untouched.
+* `vsm build` writes the scene's models to `vsm_props/` beside the script;
+  the script imports them once (synchronous AssetImportTask → Interchange),
+  colors them via `MI_VSM_*` instances, fits them to the blockout's exact
+  box, and falls back to blockout parts per-prop if anything is missing —
+  including an axis-swap guard against importer up-axis surprises.
+* `use_starter_meshes` config knob renamed **`use_prop_meshes`** (old key is
+  ignored, per the settings file's unknown-key policy). Starter Content
+  install code deleted; the mannequin auto-install (which genuinely works —
+  Templates/ still ships) is untouched. 277 tests.
 
 ### 2026-07-21 (v0.3.0): true-to-life prop audit + Starter Content meshes
 

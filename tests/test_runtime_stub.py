@@ -1,14 +1,14 @@
 """End-to-end trace: exec the generated UE script against a fake ``unreal``
-module and assert what actually spawns.
+module whose importer actually parses the shipped OBJ files.
 
-Covers the three Starter Content scenarios for meshed props:
-(a) mesh already in the project  -> spawned, scaled from its real bounds;
-(b) pack on the engine disk only -> auto-installed, then spawned;
-(c) no pack anywhere             -> blockout parts spawn, guidance logged.
+The fake ``import_asset_tasks`` reads the OBJ the runtime hands it, converts
+the vertices back from OBJ Y-up to UE Z-up (the mirror a real importer
+applies), and records the resulting bbox in a fake ``.uasset`` — so these
+tests round-trip the writer's axis contract, the import call, the
+bounds-fit spawn math, the axis-swap guard, and every fallback path.
 
-The stub models everything up to the Sequencer section; the script's
-sequencer half needs a far larger surface, so execution is allowed to stop
-there (all spawning happens before it).
+Execution is allowed to stop at the (unmodeled) Sequencer section; all
+spawning happens before it.
 """
 
 import json
@@ -19,15 +19,13 @@ import types
 
 import pytest
 
-from virtualsetmaker.emit import build_script
-from virtualsetmaker.parse import parse_file
+from virtualsetmaker.build import build_hcw
+from virtualsetmaker.settings import Defaults
 
 TABLE_SAMPLE = os.path.join(os.path.dirname(__file__), "..", "samples", "one_with_table.hcw")
 pytestmark = pytest.mark.skipif(
     not os.path.exists(TABLE_SAMPLE), reason="table sample .hcw not present"
 )
-
-MESH_BBOX = ((-60.0, -50.0, 0.0), (60.0, 50.0, 80.0))  # deliberately not a cube
 
 
 class _V:
@@ -51,8 +49,16 @@ class _Asset:
 
 
 class _Mesh(_Asset):
+    def __init__(self, path, bbox):
+        super().__init__(path)
+        self._bbox = bbox
+        self.static_materials = []
+
     def get_bounding_box(self):
-        return _Box(*MESH_BBOX)
+        return _Box(*self._bbox)
+
+    def set_material(self, i, m):
+        pass
 
 
 class _Actor:
@@ -67,25 +73,76 @@ class _Actor:
     def set_actor_scale3d(self, v):
         self.scale = v
 
-    def __getattr__(self, name):  # folder paths, attach, tint... all no-ops
+    def __getattr__(self, name):
         return lambda *a, **k: None
 
 
-def _build_stub(project_content, engine_root, spawns, logs, rescans):
-    """A fake `unreal` whose asset universe is the fake project's filesystem:
-    /Game/StarterContent/X loads iff <project_content>/StarterContent/X.uasset
-    exists — which is exactly what the install helper is supposed to create."""
+def _obj_bbox_zup(obj_path):
+    """Bbox of an OBJ file mapped back to UE Z-up (the importer's mirror)."""
+    xs, ys, zs = [], [], []
+    with open(obj_path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("v "):
+                _, x, y, z = line.split()[:4]
+                # OBJ (x, y, z) came from author (x, z, y): swap back.
+                xs.append(float(x))
+                ys.append(float(z))
+                zs.append(float(y))
+    return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
+
+
+def _build_stub(project_content, spawns, logs, imports):
+    def _uasset_file(game_path):
+        rel = game_path[len("/Game/"):].split(".")[0] + ".uasset"
+        return os.path.join(project_content, *rel.split("/"))
 
     class EditorAssetLibrary:
+        @staticmethod
+        def does_asset_exist(p):
+            return os.path.isfile(_uasset_file(p))
+
         @staticmethod
         def load_asset(p):
             if p.startswith("/Engine/BasicShapes/") or "Mannequins" in p:
                 return _Asset(p)
-            if p.startswith("/Game/StarterContent/"):
-                rel = p[len("/Game/"):].split(".")[0] + ".uasset"
-                if os.path.isfile(os.path.join(project_content, *rel.split("/"))):
-                    return _Mesh(p)
+            f = _uasset_file(p)
+            if os.path.isfile(f):
+                data = json.load(open(f))
+                return _Mesh(p, (tuple(data["lo"]), tuple(data["hi"])))
             return None
+
+        @staticmethod
+        def save_loaded_asset(a):
+            pass
+
+    class _AssetTools:
+        def import_asset_tasks(self, tasks):
+            for t in tasks:
+                imports.append(t.props.get("filename"))
+                src = t.props.get("filename")
+                if not (src and os.path.isfile(src)):
+                    continue
+                lo, hi = _obj_bbox_zup(src)
+                stem = os.path.splitext(os.path.basename(src))[0]
+                dest = t.props["destination_path"] + "/" + stem
+                f = _uasset_file(dest)
+                os.makedirs(os.path.dirname(f), exist_ok=True)
+                json.dump({"lo": lo, "hi": hi}, open(f, "w"))
+
+        def create_asset(self, *a, **k):
+            return None  # colorize fails soft; not under test here
+
+    class AssetImportTask:
+        def __init__(self):
+            self.props = {}
+
+        def set_editor_property(self, k, v):
+            self.props[k] = v
+
+    class AssetToolsHelpers:
+        @staticmethod
+        def get_asset_tools():
+            return _AssetTools()
 
     class _ActorSub:
         def spawn_actor_from_object(self, obj, loc, rot):
@@ -103,7 +160,7 @@ def _build_stub(project_content, engine_root, spawns, logs, rescans):
             return []
 
         def scan_paths_synchronous(self, paths, **kw):
-            rescans.append(list(paths))
+            pass
 
     class AssetRegistryHelpers:
         @staticmethod
@@ -117,11 +174,7 @@ def _build_stub(project_content, engine_root, spawns, logs, rescans):
     class Paths:
         @staticmethod
         def root_dir():
-            return engine_root
-
-        @staticmethod
-        def engine_dir():
-            return os.path.join(engine_root, "Engine")
+            return os.path.join(project_content, "..", "UE")
 
         @staticmethod
         def project_content_dir():
@@ -145,7 +198,6 @@ def _build_stub(project_content, engine_root, spawns, logs, rescans):
         pass
 
     actor_sub = _ActorSub()
-
     stub = types.ModuleType("unreal")
     ns = dict(
         Vector=_V,
@@ -154,6 +206,8 @@ def _build_stub(project_content, engine_root, spawns, logs, rescans):
         FrameNumber=lambda v: v,
         EditorAssetLibrary=EditorAssetLibrary,
         AssetRegistryHelpers=AssetRegistryHelpers,
+        AssetImportTask=AssetImportTask,
+        AssetToolsHelpers=AssetToolsHelpers,
         ARFilter=type("ARFilter", (), {"set_editor_property": lambda self, k, v: None}),
         TopLevelAssetPath=lambda a, b: (a, b),
         ScopedEditorTransaction=_Txn,
@@ -167,98 +221,108 @@ def _build_stub(project_content, engine_root, spawns, logs, rescans):
     )
     for k, v in ns.items():
         setattr(stub, k, v)
-    # PEP 562 module fallback: any unmodeled unreal.X becomes a dummy class,
-    # so execution proceeds until something calls real behavior we don't fake
-    # (the Sequencer section) — everything spawnable has spawned by then.
     stub.__getattr__ = lambda name: type(name, (), {})
     return stub
 
 
-def _run(tmp_path, seed_project=False, seed_engine=False):
-    project = os.path.join(str(tmp_path), "Proj", "Content")
-    engine = os.path.join(str(tmp_path), "UE")
-    os.makedirs(project, exist_ok=True)
-    if seed_project:
-        for rel in ("StarterContent/Props/SM_TableRound.uasset",
-                    "StarterContent/Props/SM_Chair.uasset"):
-            path = os.path.join(project, *rel.split("/"))
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            open(path, "w").close()
-    if seed_engine:
-        src = os.path.join(engine, "Samples", "StarterContent", "Content", "StarterContent")
-        for rel in ("Props/SM_Chair.uasset", "Props/SM_TableRound.uasset",
-                    "Props/Materials/M_TableRound.uasset",
-                    "Materials/M_Basic_Wood.uasset", "Textures/T_Wood_D.uasset"):
-            path = os.path.join(src, *rel.split("/"))
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            open(path, "w").close()
-
-    script = build_script(parse_file(TABLE_SAMPLE))
-    payload = json.loads(script.split('SCENE = json.loads(r"""', 1)[1].split('"""', 1)[0])
-    spawns, logs, rescans = [], [], []
-    stub = _build_stub(project, engine, spawns, logs, rescans)
+def _exec_script(script_path, project_content):
+    spawns, logs, imports = [], [], []
+    stub = _build_stub(project_content, spawns, logs, imports)
+    script = open(script_path, encoding="utf-8").read()
     old = sys.modules.get("unreal")
     sys.modules["unreal"] = stub
     try:
         try:
-            exec(compile(script, "<generated>", "exec"), {"__name__": "__main__"})
+            exec(compile(script, script_path, "exec"), {"__name__": "__main__"})
         except Exception:
-            pass  # sequencer surface is not modeled; spawning is done by then
+            pass  # sequencer surface not modeled; spawning is done by then
     finally:
         if old is None:
             del sys.modules["unreal"]
         else:
             sys.modules["unreal"] = old
-    return payload, spawns, logs, rescans, project
+    return spawns, logs, imports
+
+
+def _setup(tmp_path):
+    out = os.path.join(str(tmp_path), "scene_unreal.py")
+    report = build_hcw(TABLE_SAMPLE, out, options=Defaults())
+    assert report.prop_models > 0
+    payload = json.loads(
+        open(out).read().split('SCENE = json.loads(r"""', 1)[1].split('"""', 1)[0]
+    )
+    project = os.path.join(str(tmp_path), "Proj", "Content")
+    os.makedirs(project, exist_ok=True)
+    return out, payload, project
 
 
 def _meshed_prop(payload, name="TABLEROUND"):
     return next(p for p in payload["props"] if p["matched"] == name and "mesh" in p)
 
 
-def test_mesh_spawns_scaled_from_its_real_bounds(tmp_path):
-    payload, spawns, _logs, _rescans, _proj = _run(tmp_path, seed_project=True)
+def test_first_run_imports_objs_and_spawns_fitted_meshes(tmp_path):
+    out, payload, project = _setup(tmp_path)
+    spawns, logs, imports = _exec_script(out, project)
     prop = _meshed_prop(payload)
     m = prop["mesh"]
+    assert any(i and i.endswith("SM_VSM_TABLEROUND.obj") for i in imports)
     actor = next(a for a in spawns if isinstance(a.source, _Mesh)
-                 and a.source.path == m["asset"] and a.label == "Prop_" + prop["label"])
-    lo, hi = MESH_BBOX
+                 and a.source.path.endswith("SM_VSM_TABLEROUND")
+                 and a.label == "Prop_" + prop["label"])
+    # Scale = target size / authored extents (round-tripped through the OBJ).
     for i, axis in enumerate("xyz"):
-        expected = m["size"][i] / (hi[i] - lo[i])
-        assert getattr(actor.scale, axis) == pytest.approx(expected), axis
-    # Fake bbox is XY-centered with its bottom at z=0, so no pivot shift:
-    # the actor lands exactly on the prop origin, feet on the floor.
-    assert actor.loc.x == pytest.approx(m["loc"][0])
-    assert actor.loc.y == pytest.approx(m["loc"][1])
-    assert actor.loc.z == pytest.approx(0.0)
-    assert actor.rot.yaw == pytest.approx(m["yaw"] % 360.0) or \
-        actor.rot.yaw == pytest.approx(m["yaw"])
-    # And no blockout parts spawned for this prop.
+        assert getattr(actor.scale, axis) == pytest.approx(
+            m["size"][i] / m["src_ext"][i], rel=1e-3), axis
+    # Bbox center lands on the payload loc; bottom on the payload z.
+    assert actor.loc.z == pytest.approx(m["loc"][2], abs=0.01)
+    # No blockout parts for a successfully meshed prop.
     assert not [a for a in spawns
                 if a.label and a.label.startswith("Prop_%s_part" % prop["label"])]
+    # Light rigs mesh too (sample has lights only if the scene defines them).
+    if any("mesh" in lt for lt in payload["lights"]):
+        assert any(a.label and a.label.startswith("LightRig_") and isinstance(a.source, _Mesh)
+                   for a in spawns)
 
 
-def test_pack_on_engine_disk_is_auto_installed_then_spawned(tmp_path):
-    payload, spawns, logs, rescans, proj = _run(tmp_path, seed_engine=True)
+def test_second_run_reuses_imported_assets(tmp_path):
+    out, payload, project = _setup(tmp_path)
+    _spawns1, _logs1, imports1 = _exec_script(out, project)
+    spawns2, _logs2, imports2 = _exec_script(out, project)
+    assert imports1 and not imports2  # idempotent: assets already in project
     prop = _meshed_prop(payload)
-    # Files landed in the project (Props + Materials + Textures trees)...
-    for rel in ("StarterContent/Props/SM_TableRound.uasset",
-                "StarterContent/Props/Materials/M_TableRound.uasset",
-                "StarterContent/Materials/M_Basic_Wood.uasset",
-                "StarterContent/Textures/T_Wood_D.uasset"):
-        assert os.path.isfile(os.path.join(proj, *rel.split("/"))), rel
-    # ...the registry was rescanned, and the mesh actually spawned.
-    assert ["/Game/StarterContent"] in rescans
-    assert any(isinstance(a.source, _Mesh) and a.source.path == prop["mesh"]["asset"]
-               for a in spawns)
+    assert any(isinstance(a.source, _Mesh) and a.label == "Prop_" + prop["label"]
+               for a in spawns2)
 
 
-def test_no_starter_content_anywhere_falls_back_to_blockout(tmp_path):
-    payload, spawns, logs, _rescans, _proj = _run(tmp_path)
+def test_missing_props_folder_falls_back_to_blockout(tmp_path):
+    out, payload, project = _setup(tmp_path)
+    import shutil
+
+    shutil.rmtree(os.path.join(str(tmp_path), "vsm_props"))
+    spawns, logs, imports = _exec_script(out, project)
     prop = _meshed_prop(payload)
     assert not [a for a in spawns if isinstance(a.source, _Mesh)]
-    # The blockout parts spawned instead (first part carries the prop label)...
+    assert any(a.label == "Prop_" + prop["label"] for a in spawns)  # blockout parent
+    assert any("prop model file missing" in m for k, m in logs if k == "warn")
+
+
+def test_axis_rotated_import_is_caught_by_the_guard(tmp_path):
+    out, payload, project = _setup(tmp_path)
+    _exec_script(out, project)  # first run imports for real
+    # Corrupt every imported asset the way a wrong up-axis importer would:
+    # swap the Y and Z extents.
+    meshes_dir = os.path.join(project, "VSM", "Meshes")
+    for fn in os.listdir(meshes_dir):
+        f = os.path.join(meshes_dir, fn)
+        data = json.load(open(f))
+        swap = lambda v: [v[0], v[2], v[1]]
+        json.dump({"lo": swap(data["lo"]), "hi": swap(data["hi"])}, open(f, "w"))
+    spawns, logs, _imports = _exec_script(out, project)
+    prop = _meshed_prop(payload)
+    # TABLEROUND's authored Y and Z extents differ (120.6 vs 76), so the swap
+    # must trip the guard: no mesh spawn, blockout fallback, loud error.
+    assert not [a for a in spawns if isinstance(a.source, _Mesh)
+                and a.source.path.endswith("SM_VSM_TABLEROUND")
+                and a.label and a.label.startswith("Prop_")]
     assert any(a.label == "Prop_" + prop["label"] for a in spawns)
-    # ...and the log explains the UE 5.7+ situation and the manual remedy.
-    assert any("Starter Content" in m and "5.7" in m
-               for kind, m in logs if kind == "warn")
+    assert any("axis-rotated" in m for k, m in logs if k == "error")

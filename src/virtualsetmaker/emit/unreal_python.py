@@ -22,11 +22,13 @@ from .. import __version__
 from ..coords import ir_to_ue_location, ir_to_ue_rotation, ir_to_ue_yaw, M_TO_CM
 from ..ir import Camera, Scene
 from ..settings import Defaults
+# NOTE: geo.props imports emit.blockouts, so the geo imports here must be
+# lazy (inside the functions that use them) to avoid a package-init cycle.
 from .blockouts import (
-    MESH_SPECS,
     WALL_OPENINGS,
     fixture_for,
     native_span_for,
+    recipe_bbox,
     recipe_for,
     recipe_height,
     recipe_span,
@@ -90,8 +92,46 @@ COLOR_NAME_RGB = {
 }
 
 
+def _mesh_entry(
+    model: str,
+    parts: list[dict],
+    x: float,
+    y: float,
+    yaw: float,
+    sx: float,
+    sy: float,
+) -> dict:
+    """Payload block for a shipped prop mesh.
+
+    ``loc`` is the world XY of the *scaled, yawed recipe-bbox center* with z
+    at the bbox bottom -- so the runtime's center/bottom placement lands the
+    mesh exactly where the blockout stands, including off-center recipes
+    (DOG's head, CRANE's jib) and tabletop props (PAPER floats at 75 cm).
+    ``src_ext`` is the authored model extent (== recipe bbox extent by the
+    geo/props contract): the runtime compares it against the imported
+    asset's real bounds to catch an axis-rotating importer.
+    """
+    lo, hi = recipe_bbox(parts)
+    cx = (lo[0] + hi[0]) / 2.0 * sx
+    cy = (lo[1] + hi[1]) / 2.0 * sy
+    rad = math.radians(yaw)
+    return {
+        "model": model,
+        "loc": [
+            x + cx * math.cos(rad) - cy * math.sin(rad),
+            y + cx * math.sin(rad) + cy * math.cos(rad),
+            lo[2],
+        ],
+        "yaw": yaw,
+        "size": [(hi[0] - lo[0]) * sx, (hi[1] - lo[1]) * sy, hi[2] - lo[2]],
+        "src_ext": [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]],
+    }
+
+
 def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
     """Pre-convert every object into Unreal-space numbers for embedding."""
+    from ..geo.props import FIXTURE_MODELS, MODEL_BUILDERS
+
     options = options or Defaults()
     m2cm = scene.units_per_meter  # IR meters -> UE cm (1 SD unit = 1 cm => 100)
 
@@ -183,22 +223,12 @@ def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
             "matched": matched,
             "parts": _bake_parts(parts, (x, y), yaw, (sx, sy)),
         }
-        # Real-mesh upgrade: same footprint and height the blockout claims,
-        # so a missing Starter Content pack (the runtime falls back to the
-        # parts above) changes looks, never layout. Wall inserts are excluded
-        # -- their carve pipeline stays pure blockout.
-        spec = MESH_SPECS.get(matched or "") if options.use_starter_meshes else None
-        if spec is not None and opening is None:
-            bx, by = recipe_span(parts)
-            tx, ty, tz = bx * sx, by * sy, recipe_height(parts)
-            if abs(spec["yaw"]) % 180.0 == 90.0:
-                tx, ty = ty, tx  # target extents are in MESH-local axes
-            entry["mesh"] = {
-                "asset": spec["asset"],
-                "loc": [x, y, 0.0],
-                "yaw": yaw + spec["yaw"],
-                "size": [tx, ty, tz],
-            }
+        # Shipped-mesh upgrade: the model's bbox equals the recipe's bbox
+        # (contract in geo/props.py), so fitting it to the same scaled box
+        # the blockout occupies changes looks, never layout. Wall inserts
+        # are excluded -- their carve pipeline stays pure blockout.
+        if options.use_prop_meshes and matched in MODEL_BUILDERS and opening is None:
+            entry["mesh"] = _mesh_entry(matched, parts, x, y, yaw, sx, sy)
         props.append(entry)
 
     wall_segments = []
@@ -230,16 +260,19 @@ def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
             # Point lights are omnidirectional; directed classes aim down-beam.
             light_rot = [0.0 if cls == "point" else LIGHT_PITCH_DEG, yaw, 0.0]
 
-        lights.append(
-            {
-                "kind": lt.kind,
-                "label": lt.kind or lt.id,
-                "cls": cls,
-                "parts": _bake_parts(fixture["parts"], (x, y), yaw, (1.0, 1.0)),
-                "light_loc": light_loc,
-                "light_rot": light_rot,
-            }
-        )
+        light_entry = {
+            "kind": lt.kind,
+            "label": lt.kind or lt.id,
+            "cls": cls,
+            "parts": _bake_parts(fixture["parts"], (x, y), yaw, (1.0, 1.0)),
+            "light_loc": light_loc,
+            "light_rot": light_rot,
+        }
+        # Rig mesh upgrade (emit point math above is untouched by design).
+        model = fixture.get("model")
+        if options.use_prop_meshes and model in FIXTURE_MODELS and fixture["parts"]:
+            light_entry["mesh"] = _mesh_entry(model, fixture["parts"], x, y, yaw, 1.0, 1.0)
+        lights.append(light_entry)
 
     cameras = []
     for c in scene.cameras:
@@ -545,95 +578,146 @@ def _install_mannequin_pack():
         return False
 
 
-# Attempted at most once per run: a project with no Starter Content would
-# otherwise re-walk the engine install for every meshed prop.
-_STARTER_INSTALL_TRIED = [False]
-
-
-def _install_starter_props():
-    """Best-effort: copy the Starter Content prop meshes (plus the materials
-    and textures they reference) from the engine install into this project.
-    UE 5.6 and earlier ship the pack on disk under <root>/Samples/; 5.7+
-    prebuilt installs carry NOTHING, so failing here is normal -- the caller
-    falls back to blockout parts and we log how to add the pack by hand."""
+def _props_dir():
+    """The vsm_props/ folder of shipped OBJ models, written by the converter
+    next to this script (with a baked absolute fallback for Output Log
+    contexts where __file__ is unreliable)."""
     import os
-    import shutil
 
-    if _STARTER_INSTALL_TRIED[0]:
-        return False
-    _STARTER_INSTALL_TRIED[0] = True
     try:
-        root = unreal.Paths.convert_relative_path_to_full(unreal.Paths.root_dir())
-        src = None
-        for rel in (
-            ("Samples", "StarterContent", "Content", "StarterContent"),
-            ("Samples", "StarterContent", "Content"),
-        ):
-            cand = os.path.join(root, *rel)
-            if os.path.isfile(os.path.join(cand, "Props", "SM_Chair.uasset")):
-                src = cand
-                break
-        if src is None:
-            unreal.log_warning(
-                "VSM: this engine install ships no Starter Content on disk "
-                "(normal on UE 5.7+), so props spawn as blockout primitives. "
-                "For real prop meshes: Content Drawer -> +Add -> "
-                "'Add Feature or Content Pack...' -> Starter Content -> "
-                "Add to Project, then re-run this script."
-            )
-            return False
-        dest = os.path.join(
-            unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_content_dir()),
-            "StarterContent",  # load-bearing: uassets reference /Game/StarterContent/...
+        d = os.path.join(os.path.dirname(os.path.abspath(__file__)), VSM_PROPS_DIRNAME)
+        if os.path.isdir(d):
+            return d
+    except Exception:
+        pass
+    return VSM_PROPS_DIR_ABS
+
+
+def _slot_material(slot):
+    """Get-or-create MI_VSM_<slot>: a MaterialInstanceConstant parented to
+    the engine BasicShapeMaterial with its Color parameter set from the
+    embedded palette. Deterministic colors, whether or not the OBJ importer
+    honored the .mtl."""
+    rgb = VSM_MATERIAL_COLORS.get(slot)
+    if rgb is None:
+        return None
+    folder = UE_CONTENT_PATH + "/Materials"
+    full = folder + "/MI_VSM_" + slot
+    if unreal.EditorAssetLibrary.does_asset_exist(full):
+        return unreal.EditorAssetLibrary.load_asset(full)
+    base = unreal.EditorAssetLibrary.load_asset(BASIC_SHAPE_MATERIAL)
+    if base is None:
+        return None
+    factory = unreal.MaterialInstanceConstantFactoryNew()
+    factory.set_editor_property("initial_parent", base)
+    mi = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+        "MI_VSM_" + slot, folder, unreal.MaterialInstanceConstant, factory
+    )
+    if mi is not None:
+        unreal.MaterialEditingLibrary.set_material_instance_vector_parameter_value(
+            mi, "Color", unreal.LinearColor(rgb[0], rgb[1], rgb[2], 1.0)
         )
-        copied = 0
-        # Props includes Props/Materials; the root Materials + Textures trees
-        # are what those materials sample -- without them meshes render as
-        # checkerboard. Whole folders on purpose: cherry-picking texture
-        # files is fragile against material-graph references.
-        for sub in ("Props", "Materials", "Textures"):
-            top = os.path.join(src, sub)
-            if not os.path.isdir(top):
-                continue
-            for dirpath, _dirnames, filenames in os.walk(top):
-                out = os.path.join(dest, sub, os.path.relpath(dirpath, top))
-                os.makedirs(out, exist_ok=True)
-                for fn in filenames:
-                    target = os.path.join(out, fn)
-                    if not os.path.exists(target):
-                        shutil.copy2(os.path.join(dirpath, fn), target)
-                        copied += 1
-        unreal.log(
-            "VSM: installed Starter Content props into /Game/StarterContent "
-            "(%d files copied from %s)" % (copied, src)
-        )
-        registry = unreal.AssetRegistryHelpers.get_asset_registry()
-        registry.scan_paths_synchronous(["/Game/StarterContent"], force_rescan=True)
-        return True
+        unreal.MaterialEditingLibrary.update_material_instance(mi)
+        unreal.EditorAssetLibrary.save_loaded_asset(mi)
+    return mi
+
+
+def _colorize_prop_mesh(mesh):
+    """Assign the flat VSM material instances by material-slot name."""
+    try:
+        for i, sm in enumerate(mesh.static_materials):
+            slot = str(sm.material_slot_name)
+            mi = _slot_material(slot)
+            if mi is not None:
+                mesh.set_material(i, mi)
+        unreal.EditorAssetLibrary.save_loaded_asset(mesh)
     except Exception as exc:
-        unreal.log_warning("VSM: Starter Content install failed: %s" % exc)
-        return False
+        unreal.log_warning("VSM: could not colorize mesh: %s" % exc)
+
+
+# One import/load attempt per model per run.
+_MESH_MEMO = {}
+
+
+def _load_or_import_prop_mesh(model):
+    """Load /Game .../Meshes/SM_VSM_<model>, importing the shipped OBJ on
+    first use (synchronous AssetImportTask -> Interchange). None = caller
+    falls back to blockout parts."""
+    import os
+
+    if model in _MESH_MEMO:
+        return _MESH_MEMO[model]
+    mesh = None
+    asset_path = UE_CONTENT_PATH + "/Meshes/SM_VSM_" + model
+    try:
+        if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
+            mesh = unreal.EditorAssetLibrary.load_asset(asset_path)
+        else:
+            obj = os.path.join(_props_dir(), "SM_VSM_%s.obj" % model)
+            if not os.path.isfile(obj):
+                unreal.log_warning(
+                    "VSM: prop model file missing (%s) -- keep the vsm_props folder "
+                    "next to this script; using blockout for %s" % (obj, model)
+                )
+            else:
+                task = unreal.AssetImportTask()
+                task.set_editor_property("filename", obj)
+                task.set_editor_property("destination_path", UE_CONTENT_PATH + "/Meshes")
+                task.set_editor_property("automated", True)
+                task.set_editor_property("replace_existing", True)
+                task.set_editor_property("save", True)
+                unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+                mesh = unreal.EditorAssetLibrary.load_asset(asset_path)
+                if mesh is not None:
+                    unreal.log("VSM: imported prop mesh %s from %s" % (asset_path, obj))
+                    _colorize_prop_mesh(mesh)
+                else:
+                    unreal.log_warning(
+                        "VSM: import produced no asset at %s -- using blockout" % asset_path
+                    )
+    except Exception as exc:
+        unreal.log_warning("VSM: import failed for %s: %s -- using blockout" % (model, exc))
+        mesh = None
+    _MESH_MEMO[model] = mesh
+    return mesh
 
 
 def _spawn_prop_mesh(m, what):
-    """Spawn a real prop mesh scaled so its bounds match the blockout target.
+    """Spawn a shipped prop mesh fitted to the blockout's exact box.
 
-    Scale comes from the loaded mesh's own bounding box (never hardcoded
-    sizes, so re-exported engine assets keep working), with the bbox XY
-    center moved onto the prop origin and the bbox bottom onto the floor.
-    Returns the actor, or None so the caller falls back to blockout parts."""
+    Scale comes from the loaded asset's own bounding box; the bbox center
+    goes to m["loc"] XY and the bbox bottom to m["loc"][2]. An axis-swap
+    guard compares the loaded bounds against the authored extents so an
+    importer up-axis surprise falls back loudly instead of spawning a
+    lying-down prop squashed into an upright box."""
     import math as _math
 
-    mesh = unreal.EditorAssetLibrary.load_asset(m["asset"])
-    if mesh is None and _install_starter_props():
-        mesh = unreal.EditorAssetLibrary.load_asset(m["asset"])
+    mesh = _load_or_import_prop_mesh(m["model"])
     if mesh is None:
         return None
     try:
         box = mesh.get_bounding_box()
         ext = (box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z)
-        if min(ext) < 0.1:
+        if min(ext) < 0.05:
             return None
+        src = m.get("src_ext")
+        if src:
+            def _rel(a, b):
+                return abs(a - b) / max(b, 1e-3)
+
+            direct = max(_rel(ext[i], src[i]) for i in range(3))
+            if direct > 0.05:
+                swapped = max(_rel(ext[0], src[0]), _rel(ext[1], src[2]), _rel(ext[2], src[1]))
+                if swapped <= 0.05:
+                    unreal.log_error(
+                        "VSM: imported mesh %s came in axis-rotated (importer up-axis "
+                        "mismatch) -- using blockout for %s" % (m["model"], what)
+                    )
+                    return None
+                unreal.log_warning(
+                    "VSM: mesh %s bounds differ %.0f%% from authored -- fitting anyway"
+                    % (m["model"], direct * 100.0)
+                )
         sx, sy, sz = (m["size"][i] / ext[i] for i in range(3))
         cx = (box.max.x + box.min.x) / 2.0 * sx
         cy = (box.max.y + box.min.y) / 2.0 * sy
@@ -849,9 +933,15 @@ def build_scene():
             "directional": unreal.DirectionalLight,
         }
         for lt in SCENE["lights"]:
-            # rig/fixture placeholder geometry, grouped under its first part
+            # rig geometry: shipped fixture mesh first, blockout parts fallback
             rig = None
-            for i, part in enumerate(lt["parts"]):
+            lm = lt.get("mesh")
+            if lm is not None:
+                rig = _spawn_prop_mesh(lm, "light rig '%s' mesh" % lt["label"])
+                if rig is not None:
+                    rig.set_actor_label("LightRig_" + lt["label"])
+                    rig.set_folder_path("VSM/Lights")
+            for i, part in enumerate(lt["parts"] if rig is None else []):
                 mesh = meshes.get(part["shape"]) or cube
                 if mesh is None:
                     continue
@@ -1000,8 +1090,17 @@ build_scene()
 '''
 
 
-def build_script(scene: Scene, options: Defaults | None = None) -> str:
-    """Return the full Unreal Python script for ``scene`` as a string."""
+def build_script(
+    scene: Scene, options: Defaults | None = None, props_dir_abs: str = ""
+) -> str:
+    """Return the full Unreal Python script for ``scene`` as a string.
+
+    ``props_dir_abs`` is the absolute path of the vsm_props/ model folder the
+    converter wrote (baked in as the fallback for when the running script's
+    ``__file__`` is unreliable); empty means "next to the script only".
+    """
+    from ..geo.materials import MATERIALS
+
     options = options or Defaults()
     payload = json.dumps(_scene_payload(scene, options), indent=2)
     header = (
@@ -1027,7 +1126,10 @@ def build_script(scene: Scene, options: Defaults | None = None) -> str:
         "BASIC_SHAPE_MATERIAL = %r\n"
         "WALL_THICKNESS_CM = %r\n"
         "WALL_HEIGHT_CM = %r\n"
-        "UE_CONTENT_PATH = %r\n\n"
+        "UE_CONTENT_PATH = %r\n"
+        "VSM_PROPS_DIRNAME = %r\n"
+        "VSM_PROPS_DIR_ABS = %r\n"
+        "VSM_MATERIAL_COLORS = %r\n\n"
         # JSON is not Python source (false/true/null), so it must be parsed,
         # not pasted in as a literal.
         'SCENE = json.loads(r"""\n%s\n""")\n'
@@ -1045,6 +1147,9 @@ def build_script(scene: Scene, options: Defaults | None = None) -> str:
             options.wall_thickness_cm,
             options.wall_height_cm,
             options.ue_content_path,
+            "vsm_props",
+            props_dir_abs,
+            MATERIALS,
             payload,
         )
     )
@@ -1052,5 +1157,8 @@ def build_script(scene: Scene, options: Defaults | None = None) -> str:
 
 
 def write_script(scene: Scene, path: str, options: Defaults | None = None) -> None:
+    import os
+
+    props_dir = os.path.join(os.path.dirname(os.path.abspath(path)), "vsm_props")
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(build_script(scene, options))
+        fh.write(build_script(scene, options, props_dir_abs=props_dir))

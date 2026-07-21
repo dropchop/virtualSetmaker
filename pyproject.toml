@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "virtualsetmaker"
-version = "0.3.0"
+version = "0.4.0"
 description = "Turn Shot Designer (.hcw) scenes into Unreal Engine scenes (cameras, actors, props, walls, lights)."
 readme = "README.md"
 license = { text = "MIT" }

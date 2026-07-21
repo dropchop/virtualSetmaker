@@ -513,37 +513,13 @@ ALIASES: list[tuple[str, str]] = [
 # Fallback for anything unrecognized: an obvious placeholder cube.
 GENERIC = [_p(CUBE, (0, 0, 50), (100, 100, 100))]
 
-# ---------------------------------------------------------------------------
-# Real-mesh upgrades (UE Starter Content)
-# ---------------------------------------------------------------------------
-# Recipes that can be represented by an actual Starter Content static mesh.
-# The emitted runtime loads the asset (auto-installing the pack from the
-# engine install when it ships one -- UE 5.6 and earlier; 5.7+ prebuilt
-# installs carry none on disk), scales its bounding box to the same footprint
-# and height the blockout would have had, and falls back to the blockout
-# parts if anything is missing. ``yaw`` is the mesh's authored-facing
-# correction relative to the recipe frame (+Y = front), restricted to
-# 0/90/180/-90 so the emitter can pre-swap footprint axes.
-MESH_SPECS: dict[str, dict] = {
-    "CHAIR": {"asset": "/Game/StarterContent/Props/SM_Chair.SM_Chair", "yaw": 0.0},
-    "ARMCHAIR": {"asset": "/Game/StarterContent/Props/SM_Chair.SM_Chair", "yaw": 0.0},
-    "SOFA": {"asset": "/Game/StarterContent/Props/SM_Couch.SM_Couch", "yaw": 0.0},
-    "TABLEROUND": {"asset": "/Game/StarterContent/Props/SM_TableRound.SM_TableRound", "yaw": 0.0},
-    "TABLEOVAL": {"asset": "/Game/StarterContent/Props/SM_TableRound.SM_TableRound", "yaw": 0.0},
-    "BOOKCASE": {"asset": "/Game/StarterContent/Props/SM_Shelf.SM_Shelf", "yaw": 0.0},
-    "BUSH": {"asset": "/Game/StarterContent/Props/SM_Bush.SM_Bush", "yaw": 0.0},
-}
-
-
 def recipe_height(parts: list[dict]) -> float:
-    """Topmost extent of a recipe in cm (used as the mesh-fit height target).
-
-    Ignores part rotations: the recipes with mesh specs are plain furniture
-    with unrotated parts.
-    """
+    """Topmost extent of a recipe in cm (ignores part rotations; use
+    :func:`recipe_bbox` when rotated parts matter)."""
     if not parts:
         return 0.0
     return max(p["offset"][2] + p["size"][2] / 2.0 for p in parts)
+
 
 # ---------------------------------------------------------------------------
 # Native icon sizes (Shot Designer size calibration)
@@ -640,6 +616,40 @@ WALL_OPENINGS: dict[str, tuple[float, float]] = {
 }
 
 
+def recipe_bbox(
+    parts: list[dict],
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Axis-aligned ``(lo, hi)`` bounding box of a recipe in cm.
+
+    Fully rotation-aware on all three axes (same projected-OBB math as
+    :func:`recipe_span`, plus the Z row) — a pitched car-wheel cylinder
+    reaches the floor here just like the real model geometry will, which is
+    what the model-vs-recipe bbox contract needs.
+    """
+    xs: list[float] = []
+    ys: list[float] = []
+    zs: list[float] = []
+    for part in parts:
+        cx, cy, cz = part["offset"]
+        half = [s / 2.0 for s in part["size"]]
+        pitch, yaw, roll = (math.radians(a) for a in part["rot"])
+        cy_, sy_ = math.cos(yaw), math.sin(yaw)
+        cp, sp = math.cos(pitch), math.sin(pitch)
+        cr, sr = math.cos(roll), math.sin(roll)
+        row_x = (cy_ * cp, cy_ * sp * sr - sy_ * cr, cy_ * sp * cr + sy_ * sr)
+        row_y = (sy_ * cp, sy_ * sp * sr + cy_ * cr, sy_ * sp * cr - cy_ * sr)
+        row_z = (-sp, cp * sr, cp * cr)
+        ex = sum(abs(r) * h for r, h in zip(row_x, half))
+        ey = sum(abs(r) * h for r, h in zip(row_y, half))
+        ez = sum(abs(r) * h for r, h in zip(row_z, half))
+        xs += [cx - ex, cx + ex]
+        ys += [cy - ey, cy + ey]
+        zs += [cz - ez, cz + ez]
+    if not xs:
+        return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+    return (min(xs), min(ys), min(zs)), (max(xs), max(ys), max(zs))
+
+
 def recipe_span(parts: list[dict]) -> tuple[float, float]:
     """Axis-aligned (x, y) bounding-box span of a recipe in cm.
 
@@ -696,12 +706,13 @@ _STICK_FIXTURE = {
     "parts": [_p(CYL, (0, 0, 90), (4, 4, 180)), _p(CUBE, (0, 0, 190), (15, 15, 15))],
     "emit": (0, 0, 190),
     "cls": "point",
+    "model": "RIG_STICK",
 }
 
 LIGHT_FIXTURES: list[tuple[str, dict]] = [
     # (substring of kind, fixture) — checked in order, first match wins, so
     # more specific substrings come first (SOFTBOX before SOFT).
-    ("SUN", {"parts": [], "emit": (0, 0, 0), "cls": "directional"}),  # sky: no rig geo
+    ("SUN", {"parts": [], "emit": (0, 0, 0), "cls": "directional", "model": None}),  # sky: no rig geo
     ("SPEEDRAIL", {  # rigging only, no light (cls unused)
         "parts": [
             _p(CYL, (-100, 0, 120), (5, 5, 240)),
@@ -710,14 +721,16 @@ LIGHT_FIXTURES: list[tuple[str, dict]] = [
         ],
         "emit": None,
         "cls": "spot",
+        "model": "RIG_SPEEDRAIL",
     }),
-    ("CHINA", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
-    ("LANTERN", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
-    ("BULB", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
+    ("CHINA", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point", "model": "RIG_HUNGBALL"}),
+    ("LANTERN", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point", "model": "RIG_HUNGBALL"}),
+    ("BULB", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point", "model": "RIG_HUNGBALL"}),
     ("BALLOON", {  # helium balloon lights run ~150-200 cm across
         "parts": [_p(CYL, (0, 0, 260), (2, 2, 80)), _p(SPHERE, (0, 0, 345), (170, 170, 170))],
         "emit": (0, 0, 345),
         "cls": "point",
+        "model": "RIG_BALLOON",
     }),
     ("PRACTICAL", {  # in-scene floor lamp
         "parts": [
@@ -727,21 +740,23 @@ LIGHT_FIXTURES: list[tuple[str, dict]] = [
         ],
         "emit": (0, 0, 150),
         "cls": "point",
+        "model": "RIG_PRACTICAL",
     }),
     # "Light On A Stick": the app's real objectKey is HOLLYWOODLIGHT.
     ("HOLLYWOOD", _STICK_FIXTURE),
     ("STICK", _STICK_FIXTURE),
-    ("SILK", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),
-    ("BOUNCE", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),
-    ("FRAME", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect"}),
-    ("SOFTBOX", {"parts": _SOFTBOX_PARTS, "emit": (0, 45, 165), "cls": "rect"}),
-    ("SOFT", {"parts": _SOFTBOX_PARTS, "emit": (0, 45, 165), "cls": "rect"}),
-    ("FLO", {"parts": _SLAB_PARTS, "emit": (0, 14, 155), "cls": "rect"}),
-    ("PANEL", {"parts": _SLAB_PARTS, "emit": (0, 14, 155), "cls": "rect"}),
+    ("SILK", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect", "model": "RIG_FRAME"}),
+    ("BOUNCE", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect", "model": "RIG_FRAME"}),
+    ("FRAME", {"parts": _FRAME_PARTS, "emit": (0, 10, 120), "cls": "rect", "model": "RIG_FRAME"}),
+    ("SOFTBOX", {"parts": _SOFTBOX_PARTS, "emit": (0, 45, 165), "cls": "rect", "model": "RIG_SOFTBOX"}),
+    ("SOFT", {"parts": _SOFTBOX_PARTS, "emit": (0, 45, 165), "cls": "rect", "model": "RIG_SOFTBOX"}),
+    ("FLO", {"parts": _SLAB_PARTS, "emit": (0, 14, 155), "cls": "rect", "model": "RIG_SLAB"}),
+    ("PANEL", {"parts": _SLAB_PARTS, "emit": (0, 14, 155), "cls": "rect", "model": "RIG_SLAB"}),
     ("LED", {
         "parts": [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 6, 155), (35, 10, 35))],
         "emit": (0, 14, 155),
         "cls": "rect",
+        "model": "RIG_LED",
     }),
 ]
 
@@ -751,6 +766,7 @@ LIGHT_FIXTURE_DEFAULT: dict = {
     "parts": [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 8, 170), (40, 35, 40))],
     "emit": (0, 28, 170),
     "cls": "spot",
+    "model": "RIG_DEFAULT",
 }
 
 

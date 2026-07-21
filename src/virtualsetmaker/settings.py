@@ -40,7 +40,7 @@ class Defaults:
     ue_content_path: str = "/Game/VSM"  # where the level sequence asset is created
     manny_paths: Optional[list[str]] = None  # None = emitter's built-in candidates
     quinn_paths: Optional[list[str]] = None
-    use_starter_meshes: bool = True  # real Starter Content meshes for props when available
+    use_prop_meshes: bool = True  # shipped VSM prop meshes (vsm_props/ OBJs) vs pure blockouts
 
 
 def load_settings(path: str = SETTINGS_PATH) -> dict:
@@ -75,11 +75,11 @@ def defaults_from_settings(raw: dict) -> Defaults:
             elif f.name == "ue_content_path":
                 if isinstance(value, str) and value.startswith("/"):
                     d.ue_content_path = value
-            elif f.name == "use_starter_meshes":
+            elif f.name == "use_prop_meshes":
                 # bools must not fall into the float branch (float(True) is 1.0
                 # but float("false") raises and "true"/"false" strings misparse)
                 if isinstance(value, bool):
-                    d.use_starter_meshes = value
+                    d.use_prop_meshes = value
             else:
                 try:
                     number = float(value)
