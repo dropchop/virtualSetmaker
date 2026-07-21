@@ -22,7 +22,15 @@ from .. import __version__
 from ..coords import ir_to_ue_location, ir_to_ue_rotation, ir_to_ue_yaw, M_TO_CM
 from ..ir import Camera, Scene
 from ..settings import Defaults
-from .blockouts import WALL_OPENINGS, fixture_for, native_span_for, recipe_for, recipe_span
+from .blockouts import (
+    MESH_SPECS,
+    WALL_OPENINGS,
+    fixture_for,
+    native_span_for,
+    recipe_for,
+    recipe_height,
+    recipe_span,
+)
 
 WALL_HEIGHT_CM = 250.0
 WALL_THICKNESS_CM = 10.0
@@ -169,14 +177,29 @@ def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
                 yaw = _closest_parallel_yaw(seg["yaw"], yaw)
                 half_w = recipe_span(parts)[0] * sx / 2.0
                 seg["openings"].append((t - half_w, t + half_w, opening[0], opening[1]))
-        props.append(
-            {
-                "label": p.name,
-                "kind": p.kind,
-                "matched": matched,
-                "parts": _bake_parts(parts, (x, y), yaw, (sx, sy)),
+        entry = {
+            "label": p.name,
+            "kind": p.kind,
+            "matched": matched,
+            "parts": _bake_parts(parts, (x, y), yaw, (sx, sy)),
+        }
+        # Real-mesh upgrade: same footprint and height the blockout claims,
+        # so a missing Starter Content pack (the runtime falls back to the
+        # parts above) changes looks, never layout. Wall inserts are excluded
+        # -- their carve pipeline stays pure blockout.
+        spec = MESH_SPECS.get(matched or "") if options.use_starter_meshes else None
+        if spec is not None and opening is None:
+            bx, by = recipe_span(parts)
+            tx, ty, tz = bx * sx, by * sy, recipe_height(parts)
+            if abs(spec["yaw"]) % 180.0 == 90.0:
+                tx, ty = ty, tx  # target extents are in MESH-local axes
+            entry["mesh"] = {
+                "asset": spec["asset"],
+                "loc": [x, y, 0.0],
+                "yaw": yaw + spec["yaw"],
+                "size": [tx, ty, tz],
             }
-        )
+        props.append(entry)
 
     wall_segments = []
     for seg in raw_segments:
@@ -522,6 +545,111 @@ def _install_mannequin_pack():
         return False
 
 
+# Attempted at most once per run: a project with no Starter Content would
+# otherwise re-walk the engine install for every meshed prop.
+_STARTER_INSTALL_TRIED = [False]
+
+
+def _install_starter_props():
+    """Best-effort: copy the Starter Content prop meshes (plus the materials
+    and textures they reference) from the engine install into this project.
+    UE 5.6 and earlier ship the pack on disk under <root>/Samples/; 5.7+
+    prebuilt installs carry NOTHING, so failing here is normal -- the caller
+    falls back to blockout parts and we log how to add the pack by hand."""
+    import os
+    import shutil
+
+    if _STARTER_INSTALL_TRIED[0]:
+        return False
+    _STARTER_INSTALL_TRIED[0] = True
+    try:
+        root = unreal.Paths.convert_relative_path_to_full(unreal.Paths.root_dir())
+        src = None
+        for rel in (
+            ("Samples", "StarterContent", "Content", "StarterContent"),
+            ("Samples", "StarterContent", "Content"),
+        ):
+            cand = os.path.join(root, *rel)
+            if os.path.isfile(os.path.join(cand, "Props", "SM_Chair.uasset")):
+                src = cand
+                break
+        if src is None:
+            unreal.log_warning(
+                "VSM: this engine install ships no Starter Content on disk "
+                "(normal on UE 5.7+), so props spawn as blockout primitives. "
+                "For real prop meshes: Content Drawer -> +Add -> "
+                "'Add Feature or Content Pack...' -> Starter Content -> "
+                "Add to Project, then re-run this script."
+            )
+            return False
+        dest = os.path.join(
+            unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_content_dir()),
+            "StarterContent",  # load-bearing: uassets reference /Game/StarterContent/...
+        )
+        copied = 0
+        # Props includes Props/Materials; the root Materials + Textures trees
+        # are what those materials sample -- without them meshes render as
+        # checkerboard. Whole folders on purpose: cherry-picking texture
+        # files is fragile against material-graph references.
+        for sub in ("Props", "Materials", "Textures"):
+            top = os.path.join(src, sub)
+            if not os.path.isdir(top):
+                continue
+            for dirpath, _dirnames, filenames in os.walk(top):
+                out = os.path.join(dest, sub, os.path.relpath(dirpath, top))
+                os.makedirs(out, exist_ok=True)
+                for fn in filenames:
+                    target = os.path.join(out, fn)
+                    if not os.path.exists(target):
+                        shutil.copy2(os.path.join(dirpath, fn), target)
+                        copied += 1
+        unreal.log(
+            "VSM: installed Starter Content props into /Game/StarterContent "
+            "(%d files copied from %s)" % (copied, src)
+        )
+        registry = unreal.AssetRegistryHelpers.get_asset_registry()
+        registry.scan_paths_synchronous(["/Game/StarterContent"], force_rescan=True)
+        return True
+    except Exception as exc:
+        unreal.log_warning("VSM: Starter Content install failed: %s" % exc)
+        return False
+
+
+def _spawn_prop_mesh(m, what):
+    """Spawn a real prop mesh scaled so its bounds match the blockout target.
+
+    Scale comes from the loaded mesh's own bounding box (never hardcoded
+    sizes, so re-exported engine assets keep working), with the bbox XY
+    center moved onto the prop origin and the bbox bottom onto the floor.
+    Returns the actor, or None so the caller falls back to blockout parts."""
+    import math as _math
+
+    mesh = unreal.EditorAssetLibrary.load_asset(m["asset"])
+    if mesh is None and _install_starter_props():
+        mesh = unreal.EditorAssetLibrary.load_asset(m["asset"])
+    if mesh is None:
+        return None
+    try:
+        box = mesh.get_bounding_box()
+        ext = (box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z)
+        if min(ext) < 0.1:
+            return None
+        sx, sy, sz = (m["size"][i] / ext[i] for i in range(3))
+        cx = (box.max.x + box.min.x) / 2.0 * sx
+        cy = (box.max.y + box.min.y) / 2.0 * sy
+        bz = box.min.z * sz
+        rad = _math.radians(m["yaw"])
+        wx = m["loc"][0] - (cx * _math.cos(rad) - cy * _math.sin(rad))
+        wy = m["loc"][1] - (cx * _math.sin(rad) + cy * _math.cos(rad))
+        actor = _spawn_object(mesh, [wx, wy, m["loc"][2] - bz], [0.0, m["yaw"], 0.0], what)
+        if actor is not None:
+            actor.set_actor_scale3d(unreal.Vector(sx, sy, sz))
+        return actor
+    except Exception as exc:
+        unreal.log_warning("VSM: mesh fit failed for %s (%s) -- using blockout" % (what, exc))
+        return None
+
+
 _actor_sub = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
 # Names of objects whose spawn failed, so the end-of-run summary can list them.
@@ -604,7 +732,10 @@ def build_scene():
                 "VSM: engine basic shape %r failed to load -- %s blockout parts cannot spawn"
                 % (shape, shape)
             )
-    spawned = {"actors": 0, "props": 0, "prop_parts": 0, "walls": 0, "lights": 0, "cameras": 0}
+    spawned = {
+        "actors": 0, "props": 0, "prop_meshes": 0, "prop_parts": 0,
+        "walls": 0, "lights": 0, "cameras": 0,
+    }
 
     # One transaction for all the blockout geometry: a single undo entry and
     # one batch of editor notifications instead of one per spawned actor.
@@ -648,12 +779,23 @@ def build_scene():
         # --- props (multi-part blockouts) ------------------------------------
         keep_world = unreal.AttachmentRule.KEEP_WORLD
         for p in SCENE["props"]:
-            if not p["parts"]:
+            if not p["parts"] and "mesh" not in p:
                 unreal.log_warning(
                     "VSM: prop '%s' (kind %r) has no blockout parts -- nothing to spawn"
                     % (p["label"], p["kind"])
                 )
                 continue
+            # Real mesh first (Starter Content); blockout parts are the
+            # fallback whenever the mesh is unavailable or fails to fit.
+            m = p.get("mesh")
+            if m is not None:
+                actor = _spawn_prop_mesh(m, "prop '%s' mesh" % p["label"])
+                if actor is not None:
+                    spawned["props"] += 1
+                    spawned["prop_meshes"] += 1
+                    actor.set_actor_label("Prop_" + p["label"])
+                    actor.set_folder_path("VSM/Props")
+                    continue
             parent = None
             for i, part in enumerate(p["parts"]):
                 mesh = meshes.get(part["shape"]) or cube
@@ -817,12 +959,14 @@ def build_scene():
 
     unreal.EditorAssetLibrary.save_loaded_asset(seq)
     unreal.log(
-        "virtualSetmaker: built '%s' -- spawned %d/%d actors, %d/%d props (%d parts), "
+        "virtualSetmaker: built '%s' -- spawned %d/%d actors, %d/%d props "
+        "(%d real meshes, %d blockout parts), "
         "%d/%d wall segments, %d/%d lights, %d/%d cameras"
         % (
             SCENE["name"],
             spawned["actors"], len(SCENE["actors"]),
             spawned["props"], len(SCENE["props"]),
+            spawned["prop_meshes"],
             spawned["prop_parts"],
             spawned["walls"], len(SCENE["wall_segments"]),
             spawned["lights"], len(SCENE["lights"]),

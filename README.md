@@ -162,6 +162,32 @@ on the right shape. Unmatched kinds fall back to a labeled 1 m cube and
 added in a few lines. Parts spawn grouped (attached to the first part) in the
 `VSM/Props` outliner folder, so each prop moves as one unit.
 
+### Real prop meshes (UE Starter Content)
+
+Recipes with a matching **Starter Content** static mesh (chair, armchair,
+sofa, round/oval tables, bookcase, bush — see `MESH_SPECS` in
+`emit/blockouts.py`) spawn the real mesh instead of the blockout: the runtime
+loads the asset, reads its actual bounding box, and scales it so footprint
+**and** height match exactly what the blockout would have occupied — layout
+never changes, only looks. Set `use_starter_meshes` to `false` in the config's
+`defaults` section to stay all-blockout.
+
+Where the meshes come from, per engine version:
+
+* **UE 5.6 and earlier** — the engine install ships the pack on disk under
+  `<UE root>/Samples/StarterContent/`; the script auto-copies the `Props`,
+  `Materials`, and `Textures` trees into the project's
+  `Content/StarterContent/` (never overwriting) and rescans the Asset
+  Registry, same as the mannequin auto-install.
+* **UE 5.7 / 5.8 prebuilt installs ship no Starter Content on disk.** The
+  script logs this and falls back to blockouts. To get the meshes: Content
+  Drawer → **+Add** → **Add Feature or Content Pack…** → **Starter Content**
+  → Add to Project, then re-run the script (or copy a 5.6 install's
+  `Samples/` folder into the 5.8 install).
+
+Wall inserts (doors/windows/openings) deliberately stay blockouts: their
+recipe spans are the verified wall-carve widths.
+
 ### Adding a prop recipe
 
 Recipes live in [`emit/blockouts.py`](src/virtualsetmaker/emit/blockouts.py).
@@ -222,6 +248,27 @@ plus a final spawned-vs-expected summary per category.
   Verified against straight-line and curved-move samples in `samples/`.
 
 ## Changelog
+
+### 2026-07-21 (v0.3.0): true-to-life prop audit + Starter Content meshes
+
+* **Every recipe audited against real-world dimensions.** Crude single-cube
+  props became recognizable multi-part blockouts: bookcase (sides/back/5
+  shelves), dresser (drawer faces), wardrobe (plinth/doors/crown), kitchen
+  counter (toe kick + 92 cm countertop), french-door fridge (91 cm wide — was
+  a 70 cm euro larder), 30" range with backguard, two-piece toilet
+  (tank/bowl/seat), bathtub rim, bench legs, dog with legs and snout,
+  road-case stack, Magliner-style video village. Vehicles got true heights
+  (sedan roof 145, Sprinter-class van 245 with hood + windshield, semi cab
+  380, trailer at the 13'6" legal max) and aircraft got the parts that sell
+  the silhouette (Cessna high wing + tailplane, fighter canopy, 737-class
+  fin/engines/tailplane). Prison bars doubled to 13 (≈5" real centers). Light
+  rigs: C-stand base spread 85, Kino 4ft 4Bank panel, 170 cm balloon light.
+  Wall-insert spans (the carve widths) are frozen and pinned by tests.
+* **Real meshes where the engine has them** — see *Real prop meshes* above.
+  Payloads carry both the mesh spec and the blockout parts; the runtime
+  prefers the mesh and falls back cleanly, so a bare project still builds.
+* New `use_starter_meshes` config knob; end-of-run summary now counts real
+  meshes vs blockout parts; fake-`unreal` end-to-end tests (118 total).
 
 ### 2026-07-20 (second drop): wall openings, set-piece yaw, mannequin search
 

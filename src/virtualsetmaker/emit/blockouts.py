@@ -36,16 +36,18 @@ def _p(shape: str, offset, size, rot=(0.0, 0.0, 0.0)) -> dict:
 
 RECIPES: dict[str, list[dict]] = {
     "SOFA": [
-        _p(CUBE, (0, 0, 20), (130, 80, 40)),            # seat
+        _p(CUBE, (0, 0, 22.5), (130, 80, 45)),           # seat (top at 45, real sofas 43-45)
         _p(CUBE, (-77.5, 0, 30), (25, 80, 60)),          # left arm
         _p(CUBE, (77.5, 0, 30), (25, 80, 60)),           # right arm
         _p(CUBE, (0, -27.5, 65), (180, 25, 50)),         # backrest
     ],
+    # Club armchair, 90w x 85d x 90h (typical 85-95 cm cube-ish silhouette);
+    # backrest kept flush with the arms instead of overhanging them.
     "ARMCHAIR": [
-        _p(CUBE, (0, 0, 20), (60, 70, 40)),
-        _p(CUBE, (-40, 0, 27.5), (20, 70, 55)),
-        _p(CUBE, (40, 0, 27.5), (20, 70, 55)),
-        _p(CUBE, (0, -24, 65), (100, 22, 50)),
+        _p(CUBE, (0, 5, 22.5), (54, 75, 45)),            # seat
+        _p(CUBE, (-36, 5, 30), (18, 75, 60)),            # left arm
+        _p(CUBE, (36, 5, 30), (18, 75, 60)),             # right arm
+        _p(CUBE, (0, -37.5, 45), (90, 10, 90)),          # backrest
     ],
     "CHAIR": [
         _p(CUBE, (0, 0, 42), (45, 45, 8)),               # seat
@@ -60,7 +62,11 @@ RECIPES: dict[str, list[dict]] = {
         _p(CYL, (0, 0, 28), (6, 6, 56)),
         _p(CYL, (0, 0, 2), (35, 35, 4)),
     ],
-    "BENCH": [_p(CUBE, (0, 0, 22.5), (150, 40, 45))],
+    "BENCH": [
+        _p(CUBE, (0, 0, 40), (150, 40, 10)),             # seat slab
+        _p(CUBE, (-65, 0, 17.5), (10, 36, 35)),          # leg panels
+        _p(CUBE, (65, 0, 17.5), (10, 36, 35)),
+    ],
     "TABLE": [
         _p(CUBE, (0, 0, 73), (140, 80, 6)),              # top
         _p(CYL, (-62, -32, 35), (6, 6, 70)),
@@ -126,17 +132,13 @@ RECIPES: dict[str, list[dict]] = {
         _p(CUBE, (80, 0, 105), (10, 10, 210)),
         _p(CUBE, (0, 0, 215), (170, 10, 10)),
     ],
+    # 13 bars on 20 cm recipe centers: after the 155.9 native-width squeeze a
+    # full-width run lands ~12.5 cm on center, matching real detention bars
+    # (4-6" on center). The old 7 bars read as ~25 cm gaps a person fits through.
     "PRISONBARS": [
         _p(CUBE, (0, 0, 227), (250, 6, 6)),              # top rail
         _p(CUBE, (0, 0, 3), (250, 6, 6)),                # bottom rail
-        _p(CYL, (-120, 0, 115), (5, 5, 224)),
-        _p(CYL, (-80, 0, 115), (5, 5, 224)),
-        _p(CYL, (-40, 0, 115), (5, 5, 224)),
-        _p(CYL, (0, 0, 115), (5, 5, 224)),
-        _p(CYL, (40, 0, 115), (5, 5, 224)),
-        _p(CYL, (80, 0, 115), (5, 5, 224)),
-        _p(CYL, (120, 0, 115), (5, 5, 224)),
-    ],
+    ] + [_p(CYL, (x, 0, 115), (5, 5, 224)) for x in range(-120, 121, 20)],
     "IMAGEPROP": [_p(CUBE, (0, 0, 1), (200, 200, 2))],   # arbitrary user image footprint
     "WINDOW": [
         _p(CUBE, (-56, 0, 150), (8, 8, 120)),
@@ -159,26 +161,74 @@ RECIPES: dict[str, list[dict]] = {
         _p(CYL, (0, 0, 70), (8, 8, 60)),                 # trunk
         _p(SPHERE, (0, 0, 120), (80, 80, 100)),          # foliage
     ],
-    "BOOKCASE": [_p(CUBE, (0, 0, 90), (90, 30, 180))],
-    "COUNTER": [_p(CUBE, (0, 0, 45), (100, 60, 90))],
-    "DRESSER": [_p(CUBE, (0, 0, 40), (120, 50, 80))],
+    "BOOKCASE": [
+        _p(CUBE, (-43.5, 0, 90), (3, 30, 180)),          # side panels
+        _p(CUBE, (43.5, 0, 90), (3, 30, 180)),
+        _p(CUBE, (0, -13.5, 90), (90, 3, 180)),          # back panel
+        _p(CUBE, (0, 1.5, 2), (84, 27, 4)),              # shelves
+        _p(CUBE, (0, 1.5, 46), (84, 27, 4)),
+        _p(CUBE, (0, 1.5, 90), (84, 27, 4)),
+        _p(CUBE, (0, 1.5, 134), (84, 27, 4)),
+        _p(CUBE, (0, 1.5, 178), (84, 27, 4)),
+    ],
+    # Kitchen base cabinet: US standard 36" (92 cm) counter height with a
+    # toe kick and a slightly overhanging countertop slab.
+    "COUNTER": [
+        _p(CUBE, (0, -2.5, 5), (94, 55, 10)),            # toe kick
+        _p(CUBE, (0, -1.5, 49), (100, 57, 78)),          # base cabinet
+        _p(CUBE, (0, 0, 90), (100, 60, 4)),              # countertop (top 92)
+    ],
+    "DRESSER": [
+        _p(CUBE, (0, -1.5, 38.5), (120, 47, 77)),        # carcass
+        _p(CUBE, (0, -1.5, 78.5), (120, 47, 3)),         # top (80 total)
+        _p(CUBE, (0, 23.5, 14), (110, 3, 18)),           # drawer faces
+        _p(CUBE, (0, 23.5, 38), (110, 3, 18)),
+        _p(CUBE, (0, 23.5, 62), (110, 3, 18)),
+    ],
     "NIGHTSTAND": [_p(CUBE, (0, 0, 27.5), (45, 40, 55))],
-    "WARDROBE": [_p(CUBE, (0, 0, 100), (120, 60, 200))],
-    "FRIDGE": [_p(CUBE, (0, 0, 90), (70, 70, 180))],
-    "STOVE": [_p(CUBE, (0, 0, 45), (76, 70, 90))],
+    "WARDROBE": [
+        _p(CUBE, (0, -1.5, 5), (116, 53, 10)),           # plinth
+        _p(CUBE, (0, -1.5, 102.5), (120, 57, 185)),      # carcass
+        _p(CUBE, (-29.5, 28.5, 105), (57, 3, 180)),      # door slabs
+        _p(CUBE, (29.5, 28.5, 105), (57, 3, 180)),
+        _p(CUBE, (0, 0, 197.5), (120, 60, 5)),           # crown (200 total)
+    ],
+    # French-door fridge: US full-size is ~91 wide x 91 deep x 178 high
+    # (the old 70x70 read as a slim euro larder, half a fridge too small).
+    "FRIDGE": [
+        _p(CUBE, (0, -3.5, 89), (91, 84, 178)),          # cabinet
+        _p(CUBE, (-22.75, 42, 122), (44, 7, 108)),       # french doors
+        _p(CUBE, (22.75, 42, 122), (44, 7, 108)),
+        _p(CUBE, (0, 42, 40), (89, 7, 70)),              # freezer drawer
+    ],
+    # US 30" range: 76w x 66d x 91h cooktop plus a low control backguard.
+    "STOVE": [
+        _p(CUBE, (0, 0, 44), (76, 64, 88)),              # body
+        _p(CUBE, (0, 0, 89.5), (76, 64, 3)),             # cooktop (91 total)
+        _p(CUBE, (0, 33, 60), (70, 2, 50)),              # oven door face
+        _p(CUBE, (0, -30.5, 98.5), (76, 3, 15)),         # control backguard
+    ],
+    # Two-piece toilet, 38w x 70d x 76h tank top, 43 seat height.
     "TOILET": [
-        _p(CUBE, (0, 0, 20), (40, 60, 40)),
-        _p(CUBE, (0, -22.5, 60), (45, 15, 40)),
+        _p(CUBE, (0, -25, 56), (38, 20, 40)),            # tank
+        _p(CYL, (0, 10, 20), (36, 50, 40)),              # bowl
+        _p(CUBE, (0, 8, 41.5), (38, 46, 3)),             # seat
     ],
     "SINK": [
         _p(CYL, (0, 0, 40), (15, 15, 80)),
         _p(CYL, (0, 0, 87.5), (50, 50, 15)),
     ],
-    "BATHTUB": [_p(CUBE, (0, 0, 27.5), (170, 75, 55))],
+    "BATHTUB": [
+        _p(CUBE, (0, 0, 25), (170, 75, 50)),             # shell
+        _p(CUBE, (-80, 0, 52.5), (10, 75, 5)),           # rim lips imply the basin
+        _p(CUBE, (80, 0, 52.5), (10, 75, 5)),
+        _p(CUBE, (0, -32.5, 52.5), (150, 10, 5)),
+        _p(CUBE, (0, 32.5, 52.5), (150, 10, 5)),
+    ],
     "RUG": [_p(CUBE, (0, 0, 1), (200, 140, 2))],
     "CAR": [
-        _p(CUBE, (0, 0, 60), (180, 450, 55)),            # body
-        _p(CUBE, (0, 20, 110), (170, 220, 45)),          # cabin
+        _p(CUBE, (0, 0, 62.5), (180, 450, 60)),          # body
+        _p(CUBE, (0, 15, 118), (165, 230, 55)),          # cabin (roof ~145, sedan height)
         _p(CYL, (-80, -140, 32.5), (65, 65, 20), rot=(90, 0, 0)),
         _p(CYL, (80, -140, 32.5), (65, 65, 20), rot=(90, 0, 0)),
         _p(CYL, (-80, 140, 32.5), (65, 65, 20), rot=(90, 0, 0)),
@@ -218,6 +268,11 @@ RECIPES: dict[str, list[dict]] = {
     "DOG": [
         _p(CUBE, (0, 0, 45), (30, 70, 35)),              # body
         _p(CUBE, (0, 42, 65), (22, 25, 25)),             # head
+        _p(CUBE, (0, 57, 58), (10, 12, 10)),             # snout
+        _p(CYL, (-10, -25, 14), (6, 6, 28)),             # legs
+        _p(CYL, (10, -25, 14), (6, 6, 28)),
+        _p(CYL, (-10, 25, 14), (6, 6, 28)),
+        _p(CYL, (10, 25, 14), (6, 6, 28)),
     ],
     "BUSH": [_p(SPHERE, (0, 0, 45), (120, 120, 90))],
     "TREE": [
@@ -225,23 +280,26 @@ RECIPES: dict[str, list[dict]] = {
         _p(SPHERE, (0, 0, 375), (350, 350, 300)),        # canopy
     ],
     # --- vehicles ---------------------------------------------------------
+    # Cargo/passenger van (Sprinter-class): high roof ~245 cm, short hood.
     "MINIBUS": [
-        _p(CUBE, (0, 0, 110), (200, 480, 160)),
+        _p(CUBE, (0, -25, 142.5), (200, 430, 195)),      # box body
+        _p(CUBE, (0, 210, 100), (190, 60, 110)),         # hood/nose
+        _p(CUBE, (0, 187, 190), (185, 8, 85), rot=(-24, 0, 0)),  # windshield
         _p(CYL, (-85, -160, 35), (70, 70, 20), rot=(90, 0, 0)),
         _p(CYL, (85, -160, 35), (70, 70, 20), rot=(90, 0, 0)),
-        _p(CYL, (-85, 160, 35), (70, 70, 20), rot=(90, 0, 0)),
-        _p(CYL, (85, 160, 35), (70, 70, 20), rot=(90, 0, 0)),
+        _p(CYL, (-85, 165, 35), (70, 70, 20), rot=(90, 0, 0)),
+        _p(CYL, (85, 165, 35), (70, 70, 20), rot=(90, 0, 0)),
     ],
     "SEMITRUCK": [
         _p(CUBE, (0, -80, 65), (250, 440, 70)),          # chassis
-        _p(CUBE, (0, 160, 185), (240, 260, 240)),        # cab
+        _p(CUBE, (0, 160, 222.5), (240, 260, 315)),      # cab (roof ~380, real conventional)
         _p(CYL, (-105, 190, 50), (100, 100, 30), rot=(90, 0, 0)),
         _p(CYL, (105, 190, 50), (100, 100, 30), rot=(90, 0, 0)),
         _p(CYL, (-105, -180, 50), (100, 100, 30), rot=(90, 0, 0)),
         _p(CYL, (105, -180, 50), (100, 100, 30), rot=(90, 0, 0)),
     ],
     "TRUCKTRAILER": [
-        _p(CUBE, (0, 0, 180), (250, 1200, 270)),
+        _p(CUBE, (0, 0, 245), (250, 1200, 330)),         # box top ~410 (US 13'6" legal max)
         _p(CYL, (-105, -420, 45), (90, 90, 30), rot=(90, 0, 0)),
         _p(CYL, (105, -420, 45), (90, 90, 30), rot=(90, 0, 0)),
         _p(CYL, (-105, -260, 45), (90, 90, 30), rot=(90, 0, 0)),
@@ -258,20 +316,29 @@ RECIPES: dict[str, list[dict]] = {
         _p(CUBE, (0, -30, 190), (200, 250, 80)),         # turret
         _p(CYL, (0, 260, 190), (25, 25, 380), rot=(0, 0, 90)),  # barrel (axis +Y)
     ],
+    # Cessna-class: HIGH wing over the cabin (the old mid-set wing read as a
+    # low-wing type), plus a horizontal tailplane.
     "PLANESMALL": [
         _p(CYL, (0, 0, 150), (100, 100, 700), rot=(0, 0, 90)),  # fuselage
-        _p(CUBE, (0, 60, 150), (1000, 150, 12)),         # wing
+        _p(CUBE, (0, 30, 205), (1000, 150, 12)),         # high wing
         _p(CUBE, (0, -320, 215), (12, 100, 120)),        # tail fin
+        _p(CUBE, (0, -320, 160), (340, 90, 10)),         # tailplane
     ],
     "FIGHTERJET": [
         _p(CYL, (0, 0, 180), (110, 110, 1500), rot=(0, 0, 90)),
         _p(CUBE, (0, -150, 180), (900, 320, 15)),
         _p(CUBE, (0, -620, 280), (15, 220, 160)),
+        _p(SPHERE, (0, 300, 235), (70, 200, 50)),        # canopy bubble
     ],
+    # 737-class: fin tops out ~12.5 m (old 8.75 was a bizjet tail), underslung
+    # engines and a tailplane make the silhouette read from any angle.
     "COMMERCIALJET": [
         _p(CYL, (0, 0, 350), (400, 400, 3500), rot=(0, 0, 90)),
         _p(CUBE, (0, 0, 330), (3000, 550, 30)),
-        _p(CUBE, (0, -1620, 600), (30, 450, 550)),
+        _p(CUBE, (0, -1620, 850), (30, 450, 800)),       # tail fin
+        _p(CUBE, (0, -1560, 500), (1100, 300, 25)),      # tailplane
+        _p(CYL, (-700, 150, 240), (170, 170, 350), rot=(0, 0, 90)),  # engines
+        _p(CYL, (700, 150, 240), (170, 170, 350), rot=(0, 0, 90)),
     ],
     # --- production equipment ---------------------------------------------
     "BOOM": [
@@ -282,19 +349,32 @@ RECIPES: dict[str, list[dict]] = {
     ],
     "CRANE": [
         _p(CUBE, (0, 0, 25), (130, 190, 50)),            # base/dolly
-        _p(CUBE, (0, 130, 130), (22, 480, 22)),          # arm
-        _p(CUBE, (0, -125, 130), (60, 70, 60)),          # counterweight
+        _p(CUBE, (0, 0, 80), (30, 30, 60)),              # pivot post
+        _p(CUBE, (0, 100, 145), (22, 480, 22), rot=(-12, 0, 0)),  # jib arm, rising
+        _p(CUBE, (0, -130, 110), (60, 70, 60)),          # counterweight
     ],
     "MICROPHONE": [
         _p(CYL, (0, 0, 2), (40, 40, 4)),
         _p(CYL, (0, 0, 77), (4, 4, 150)),
         _p(CUBE, (0, 6, 160), (7, 22, 7)),
     ],
+    # Video village: Magliner-style cart (open shelves on posts) with two
+    # monitors on top, instead of an anonymous wardrobe-sized box.
     "MONITORVILLAGE": [
-        _p(CUBE, (0, 0, 70), (100, 60, 140)),            # cart
-        _p(CUBE, (0, -5, 165), (90, 8, 50)),             # monitors
+        _p(CUBE, (0, 0, 27), (150, 65, 6)),              # bottom shelf
+        _p(CUBE, (0, 0, 100), (150, 65, 6)),             # top shelf
+        _p(CYL, (-72, -29, 51.5), (5, 5, 103)),          # posts
+        _p(CYL, (72, -29, 51.5), (5, 5, 103)),
+        _p(CYL, (-72, 29, 51.5), (5, 5, 103)),
+        _p(CYL, (72, 29, 51.5), (5, 5, 103)),
+        _p(CUBE, (-38, -5, 128), (70, 10, 45)),          # monitors
+        _p(CUBE, (38, -5, 128), (70, 10, 45)),
     ],
-    "EQUIPMENT": [_p(CUBE, (0, 0, 50), (120, 80, 100))],
+    "EQUIPMENT": [
+        _p(CUBE, (0, 0, 30), (120, 80, 60)),             # road-case stack
+        _p(CUBE, (-10, 0, 72.5), (90, 70, 25)),
+        _p(CUBE, (20, 5, 97.5), (60, 50, 25)),
+    ],
     "ARROW": [_p(CUBE, (0, 0, 1), (30, 150, 2))],        # floor blocking marker
 }
 
@@ -434,6 +514,38 @@ ALIASES: list[tuple[str, str]] = [
 GENERIC = [_p(CUBE, (0, 0, 50), (100, 100, 100))]
 
 # ---------------------------------------------------------------------------
+# Real-mesh upgrades (UE Starter Content)
+# ---------------------------------------------------------------------------
+# Recipes that can be represented by an actual Starter Content static mesh.
+# The emitted runtime loads the asset (auto-installing the pack from the
+# engine install when it ships one -- UE 5.6 and earlier; 5.7+ prebuilt
+# installs carry none on disk), scales its bounding box to the same footprint
+# and height the blockout would have had, and falls back to the blockout
+# parts if anything is missing. ``yaw`` is the mesh's authored-facing
+# correction relative to the recipe frame (+Y = front), restricted to
+# 0/90/180/-90 so the emitter can pre-swap footprint axes.
+MESH_SPECS: dict[str, dict] = {
+    "CHAIR": {"asset": "/Game/StarterContent/Props/SM_Chair.SM_Chair", "yaw": 0.0},
+    "ARMCHAIR": {"asset": "/Game/StarterContent/Props/SM_Chair.SM_Chair", "yaw": 0.0},
+    "SOFA": {"asset": "/Game/StarterContent/Props/SM_Couch.SM_Couch", "yaw": 0.0},
+    "TABLEROUND": {"asset": "/Game/StarterContent/Props/SM_TableRound.SM_TableRound", "yaw": 0.0},
+    "TABLEOVAL": {"asset": "/Game/StarterContent/Props/SM_TableRound.SM_TableRound", "yaw": 0.0},
+    "BOOKCASE": {"asset": "/Game/StarterContent/Props/SM_Shelf.SM_Shelf", "yaw": 0.0},
+    "BUSH": {"asset": "/Game/StarterContent/Props/SM_Bush.SM_Bush", "yaw": 0.0},
+}
+
+
+def recipe_height(parts: list[dict]) -> float:
+    """Topmost extent of a recipe in cm (used as the mesh-fit height target).
+
+    Ignores part rotations: the recipes with mesh specs are plain furniture
+    with unrotated parts.
+    """
+    if not parts:
+        return 0.0
+    return max(p["offset"][2] + p["size"][2] / 2.0 for p in parts)
+
+# ---------------------------------------------------------------------------
 # Native icon sizes (Shot Designer size calibration)
 # ---------------------------------------------------------------------------
 # Shot Designer's <objectScaleX/Y> is relative to each icon's NATIVE art size
@@ -568,7 +680,7 @@ def recipe_span(parts: list[dict]) -> tuple[float, float]:
 # rect lights, omnidirectional lanterns as points, the sun as a directional,
 # and fresnels/ellipsoidals/PARs/anything unrecognized as spotlights.
 
-_STAND_BASE = _p(CYL, (0, 0, 2), (60, 60, 4))
+_STAND_BASE = _p(CYL, (0, 0, 2), (85, 85, 4))  # C-stand leg spread ~85 cm
 _STAND_POLE = _p(CYL, (0, 0, 82), (5, 5, 160))
 # Shared rig geometry (frame on two stands; softbox head; slab head; hung ball)
 _FRAME_PARTS = [
@@ -577,7 +689,7 @@ _FRAME_PARTS = [
     _p(CUBE, (0, 0, 120), (120, 6, 120)),
 ]
 _SOFTBOX_PARTS = [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 12, 165), (90, 60, 90))]
-_SLAB_PARTS = [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 6, 155), (100, 10, 60))]
+_SLAB_PARTS = [_STAND_BASE, _STAND_POLE, _p(CUBE, (0, 6, 155), (122, 10, 64))]  # Kino 4ft 4Bank
 _HUNG_BALL_PARTS = [_p(CYL, (0, 0, 250), (2, 2, 60)), _p(SPHERE, (0, 0, 190), (60, 60, 60))]
 # Handheld omni lamp on a pole ("Light On A Stick", objectKey HOLLYWOODLIGHT)
 _STICK_FIXTURE = {
@@ -602,9 +714,9 @@ LIGHT_FIXTURES: list[tuple[str, dict]] = [
     ("CHINA", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
     ("LANTERN", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
     ("BULB", {"parts": _HUNG_BALL_PARTS, "emit": (0, 0, 190), "cls": "point"}),
-    ("BALLOON", {
-        "parts": [_p(CYL, (0, 0, 260), (2, 2, 80)), _p(SPHERE, (0, 0, 320), (120, 120, 120))],
-        "emit": (0, 0, 320),
+    ("BALLOON", {  # helium balloon lights run ~150-200 cm across
+        "parts": [_p(CYL, (0, 0, 260), (2, 2, 80)), _p(SPHERE, (0, 0, 345), (170, 170, 170))],
+        "emit": (0, 0, 345),
         "cls": "point",
     }),
     ("PRACTICAL", {  # in-scene floor lamp

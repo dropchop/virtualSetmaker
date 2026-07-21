@@ -1,5 +1,7 @@
 import math
 
+import pytest
+
 from virtualsetmaker.emit.blockouts import GENERIC, RECIPES, match_kind, recipe_for
 from virtualsetmaker.emit.unreal_python import _bake_parts
 
@@ -94,6 +96,31 @@ def test_all_recipes_have_positive_dimensions():
         for part in parts:
             assert all(s > 0 for s in part["size"]), (name, part)
             assert part["offset"][2] >= 0, (name, part)  # nothing below the floor
+
+
+def test_recipes_stay_modest_in_part_count():
+    # Blockouts are blocking aids, not models: keep spawn cost bounded.
+    # PRISONBARS is the outlier by nature (13 bars + 2 rails).
+    for name, parts in RECIPES.items():
+        assert len(parts) <= 16, (name, len(parts))
+
+
+def test_audited_heights_match_real_world_references():
+    # Spot pins from the 2026-07 true-to-life audit (top of recipe, cm).
+    from virtualsetmaker.emit.blockouts import recipe_height
+
+    expected = {
+        "FRIDGE": 178.0,     # US french-door
+        "COUNTER": 92.0,     # 36" kitchen counter
+        "STOVE": 106.0,      # 91 cooktop + control backguard
+        "TOILET": 76.0,      # tank top
+        "DOOR": 220.0,       # carve contract -- must never move
+        "WARDROBE": 200.0,
+        "SEMITRUCK": 380.0,  # conventional cab roof
+        "TRUCKTRAILER": 410.0,  # US 13'6" legal max
+    }
+    for name, top in expected.items():
+        assert recipe_height(RECIPES[name]) == pytest.approx(top, abs=0.6), name
 
 
 def test_bake_rotates_offsets_about_prop_origin():

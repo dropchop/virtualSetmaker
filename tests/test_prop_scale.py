@@ -69,6 +69,55 @@ def test_wall_snapped_sets_have_no_native_entry():
     assert native_span_for(None) is None
 
 
+def test_wall_insert_spans_are_frozen():
+    # These X spans ARE the carve widths (opening = span * objectScale) and
+    # were verified against real scenes. Reshaping any wall-insert recipe must
+    # never move them.
+    frozen = {
+        "DOOR": 110.0,
+        "DOOROPEN": 110.0,
+        "DOORDOUBLECLOSED": 200.0,
+        "DOORDOUBLEOPEN": 200.0,
+        "OPENING": 170.0,
+        "WINDOW": 120.0,
+    }
+    for name, span_x in frozen.items():
+        assert recipe_span(RECIPES[name])[0] == pytest.approx(span_x), name
+
+
+def test_recalibrated_recipes_claim_their_researched_footprints():
+    # Recipes ABSENT from SD_NATIVE emit at recipe span * objectScale, so
+    # these spans are deliberate real-world size claims (2026-07 audit).
+    claims = {
+        "ARMCHAIR": (90.0, 85.0),
+        "COUNTER": (100.0, 60.0),
+        "FRIDGE": (91.0, 91.0),
+        "STOVE": (76.0, 66.0),
+        "TOILET": (38.0, 70.0),
+        "BENCH": (150.0, 40.0),
+        "BATHTUB": (170.0, 75.0),
+        "WARDROBE": (120.0, 60.0),
+        "DRESSER": (120.0, 50.0),
+        "BOOKCASE": (90.0, 30.0),
+    }
+    for name, (w, d) in claims.items():
+        assert native_span_for(name) is None, name
+        bx, by = recipe_span(RECIPES[name])
+        assert bx == pytest.approx(w, abs=0.1), name
+        assert by == pytest.approx(d, abs=0.1), name
+
+
+def test_prisonbars_keep_rail_depth_and_gain_tight_spacing():
+    # Y stays 6 cm rails (native depth None = uncorrected); 13 bars over the
+    # 240 cm run = 20 cm recipe centers (~12.5 cm world after native squeeze).
+    parts = RECIPES["PRISONBARS"]
+    bars = [p for p in parts if p["shape"] == "cylinder"]
+    assert len(bars) == 13
+    xs = sorted(p["offset"][0] for p in bars)
+    assert xs[1] - xs[0] == pytest.approx(20.0)
+    assert recipe_span(parts)[1] == pytest.approx(6.0)
+
+
 def test_sofa_native_matches_the_measured_scene():
     # Sofa native comes from the app art (154.8 x 78.9) — within a stroke
     # width of the recipe (180 was our guess for width; depth 80 vs 78.9),
