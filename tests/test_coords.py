@@ -27,7 +27,6 @@ def test_rotation_tuple_order_is_pitch_yaw_roll():
     assert roll == 30.0
 
 
-def test_custom_units_per_meter():
-    # If 1 unit = 1 inch, caller passes 39.37 units/m -> different scale factor.
+def test_meters_to_cm_scale_can_be_overridden():
     x, _y, _z = ir_to_ue_location(Vec3(2.0, 0.0, 0.0), m_to_cm=39.37)
     assert abs(x - 78.74) < 1e-6
