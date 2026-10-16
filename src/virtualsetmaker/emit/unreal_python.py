@@ -133,7 +133,7 @@ def _scene_payload(scene: Scene, options: Defaults | None = None) -> dict:
     from ..geo.props import FIXTURE_MODELS, MODEL_BUILDERS
 
     options = options or Defaults()
-    m2cm = scene.units_per_meter  # IR meters -> UE cm (1 SD unit = 1 cm => 100)
+    m2cm = M_TO_CM  # IR is already meters (the parser divided by units_per_meter)
 
     actors = []
     for a in scene.actors:

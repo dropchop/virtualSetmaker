@@ -290,7 +290,7 @@ def _assemble_cameras(
                 time_s=t,
                 location=p,
                 yaw_deg=y,
-                focal_length_mm=_DEFAULT_FOCAL_MM,
+                focal_length_mm=focal_length_mm,
             )
             for p, y, t in zip(positions, yaws, times)
         ]
